@@ -1,6 +1,7 @@
 // Backend instances, the pool that owns them, and the selection strategies.
 // Node runs application code on a single thread, so the atomic counters used
 // in the original implementation become plain numbers here.
+import { CircuitBreaker } from './circuitBreaker.js';
 
 export const Strategy = Object.freeze({
   RoundRobin: 'round_robin',
@@ -31,8 +32,11 @@ export function parseStrategy(s) {
   }
 }
 
+// Smoothing factor for the exponentially weighted moving average of latency.
+const EWMA_ALPHA = 0.3;
+
 export class Backend {
-  constructor(rawURL, weight = 1) {
+  constructor(rawURL, weight = 1, breakerOptions = {}) {
     let parsed;
     try {
       parsed = new URL(rawURL);
@@ -50,9 +54,11 @@ export class Backend {
     this.weight = Number(weight) > 0 ? Number(weight) : 1;
     this.currentWeight = 0;
 
-    this.alive = true;
+    this.alive = true; // set by active health checks
+    this.breaker = new CircuitBreaker(breakerOptions); // passive failure detection
+
     this.totalRequests = 0;
-    this.totalLatencyMs = 0;
+    this.ewmaLatencyMs = 0; // exponentially weighted moving average latency
     this.active = 0; // current number of in-flight requests
   }
 
@@ -64,10 +70,29 @@ export class Backend {
     return this.alive;
   }
 
-  // Record a completed request and its latency (milliseconds).
+  // A backend is eligible for selection only if it is both health-check alive
+  // and not currently ejected by its circuit breaker.
+  isAvailable() {
+    return this.alive && this.breaker.requestAllowed();
+  }
+
+  recordSuccess() {
+    this.breaker.recordSuccess();
+  }
+
+  recordFailure() {
+    this.breaker.recordFailure();
+  }
+
+  // Record a completed request's latency (milliseconds) into the EWMA so recent
+  // behaviour dominates and old samples decay.
   recordRequest(durationMs) {
     this.totalRequests += 1;
-    this.totalLatencyMs += durationMs;
+    if (this.totalRequests === 1) {
+      this.ewmaLatencyMs = durationMs;
+    } else {
+      this.ewmaLatencyMs = EWMA_ALPHA * durationMs + (1 - EWMA_ALPHA) * this.ewmaLatencyMs;
+    }
   }
 
   incActive() {
@@ -78,12 +103,9 @@ export class Backend {
     this.active -= 1;
   }
 
-  // Average latency in milliseconds.
+  // Smoothed average latency in milliseconds.
   avgLatency() {
-    if (this.totalRequests === 0) {
-      return 0;
-    }
-    return this.totalLatencyMs / this.totalRequests;
+    return this.totalRequests === 0 ? 0 : this.ewmaLatencyMs;
   }
 
   activeRequests() {
@@ -93,11 +115,11 @@ export class Backend {
 
 // Build a Backend from a config spec: either a plain URL string or an
 // object of the form { url, weight }.
-export function specToBackend(spec) {
+export function specToBackend(spec, breakerOptions) {
   if (typeof spec === 'string') {
-    return new Backend(spec);
+    return new Backend(spec, 1, breakerOptions);
   }
-  return new Backend(spec.url, spec.weight ?? 1);
+  return new Backend(spec.url, spec.weight ?? 1, breakerOptions);
 }
 
 export class BackendPool {
@@ -107,24 +129,27 @@ export class BackendPool {
     this.strategy = strategy;
   }
 
-  static fromSpecs(specs) {
-    return new BackendPool(specs.map(specToBackend));
+  static fromSpecs(specs, breakerOptions) {
+    return new BackendPool(specs.map((s) => specToBackend(s, breakerOptions)));
   }
 
-  getNextBackend(clientIP) {
+  // Pick the next backend per the configured strategy, skipping unavailable
+  // backends and any already attempted this request (`excluded`).
+  getNextBackend(clientIP, excluded = new Set()) {
     const backends = this.backends;
     const n = backends.length;
     if (n === 0) {
       return null;
     }
+    const usable = (b) => b.isAvailable() && !excluded.has(b);
 
     switch (this.strategy) {
       case Strategy.WeightedRoundRobin: {
-        // Smooth weighted round robin (nginx-style), over alive backends only.
+        // Smooth weighted round robin (nginx-style), over usable backends only.
         let totalWeight = 0;
         let best = null;
         for (const b of backends) {
-          if (!b.isAlive()) continue;
+          if (!usable(b)) continue;
           b.currentWeight += b.weight;
           totalWeight += b.weight;
           if (best === null || b.currentWeight > best.currentWeight) {
@@ -143,7 +168,7 @@ export class BackendPool {
         let best = null;
         let minActive = Infinity;
         for (const b of backends) {
-          if (!b.isAlive()) continue;
+          if (!usable(b)) continue;
           const active = b.activeRequests();
           if (active < minActive) {
             minActive = active;
@@ -159,7 +184,7 @@ export class BackendPool {
         let best = null;
         let bestScore = Infinity;
         for (const b of backends) {
-          if (!b.isAlive()) continue;
+          if (!usable(b)) continue;
           const score = b.activeRequests() + b.avgLatency() / 100;
           if (score < bestScore) {
             bestScore = score;
@@ -173,7 +198,7 @@ export class BackendPool {
         let best = null;
         let bestLatency = Infinity;
         for (const b of backends) {
-          if (!b.isAlive()) continue;
+          if (!usable(b)) continue;
           const lat = b.avgLatency();
           if (lat < bestLatency) {
             bestLatency = lat;
@@ -187,7 +212,7 @@ export class BackendPool {
         const idx = hashIP(clientIP) % n;
         for (let i = 0; i < n; i++) {
           const b = backends[(idx + i) % n];
-          if (b.isAlive()) {
+          if (usable(b)) {
             return b;
           }
         }
@@ -199,19 +224,11 @@ export class BackendPool {
         for (let i = 0; i < n; i++) {
           this.current += 1;
           const b = backends[this.current % n];
-          if (b.isAlive()) {
+          if (usable(b)) {
             return b;
           }
         }
         return null;
-      }
-    }
-  }
-
-  setBackendAlive(url, alive) {
-    for (const b of this.backends) {
-      if (b.target === url) {
-        b.setAlive(alive);
       }
     }
   }
