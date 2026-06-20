@@ -473,6 +473,11 @@ export class LoadBalancer {
 
     const healthCheckDuration = performance.now() - start;
     backend.setAlive(isAlive);
+    // Drop pooled keep-alive sockets to an unhealthy backend so we don't reuse a
+    // dead connection (and re-trip the breaker) when it comes back.
+    if (!isAlive) {
+      this.evictSockets(backend);
+    }
     this.updateBackendHealthMetrics(prefix, backend, isAlive, healthCheckDuration);
 
     logger.info(requestId, 'Health check result', {
@@ -481,6 +486,24 @@ export class LoadBalancer {
       method: 'GET',
       status: isAlive ? 'UP' : 'DOWN',
     });
+  }
+
+  // Destroy the keep-alive agent's pooled sockets for a backend (idle and
+  // active), so stale connections to a flapped backend aren't reused.
+  evictSockets(backend) {
+    try {
+      const name = this.agent.getName({
+        host: backend.url.hostname,
+        port: backend.url.port || (backend.url.protocol === 'https:' ? 443 : 80),
+      });
+      for (const pool of [this.agent.freeSockets[name], this.agent.sockets[name]]) {
+        if (pool) {
+          for (const socket of [...pool]) socket.destroy();
+        }
+      }
+    } catch {
+      /* agent internals are best-effort */
+    }
   }
 
   addBackendToRoute(prefix, backendURL, strategy, weight = 1) {
