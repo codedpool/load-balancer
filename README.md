@@ -1,5 +1,7 @@
 # Load Balancer
 
+[![CI](https://github.com/codedpool/load-balancer/actions/workflows/ci.yml/badge.svg)](https://github.com/codedpool/load-balancer/actions/workflows/ci.yml)
+
 A high-performance HTTP load balancer written in Node.js with health checking, multiple load balancing strategies, Prometheus metrics, structured logging, and a runtime admin API.
 
 ## Table of Contents
@@ -190,6 +192,30 @@ npm run start:cluster
 # 3. Send a request
 curl http://localhost:8080/users
 ```
+
+### Docker (full stack, one command)
+
+Brings up the load balancer, five mock backends, Redis (shared rate limiting),
+Prometheus, and Grafana — wired together:
+
+```bash
+docker-compose up --build
+curl localhost:8080/users        # data plane
+# Prometheus: http://localhost:9090   Grafana: http://localhost:3000 (admin/admin)
+```
+
+### Chaos demo (watch failover + self-healing)
+
+Drives steady traffic, kills a backend mid-flight, then revives it — printing a
+per-second timeline. No Docker needed:
+
+```bash
+npm run demo:chaos
+```
+
+You'll see the circuit breaker eject the dead backend, traffic shift to the
+healthy ones, the backend recover after revival, and **0 failed requests
+throughout** (failover hides the outage from clients).
 
 ## Configuration
 
@@ -498,13 +524,17 @@ load-balancer/
 ├── tests/                      # Unit + integration tests (node:test)
 ├── bench/
 │   └── bench.js                # autocannon load benchmark
+├── scripts/
+│   └── chaos-demo.js           # Kill-a-backend failover/recovery demo
 ├── mock_servers/               # Mock backend servers for testing
 │   ├── backend_user1.js ... backend_post2.js
 │   └── start.js                # Spawns all mock servers
-├── routes.json                 # Routes configuration
+├── .github/workflows/ci.yml    # CI: runs tests on Node 20 & 22
+├── Dockerfile                  # Production image
+├── docker-compose.yml          # Full stack: lb + backends + redis + prometheus + grafana
+├── routes.json                 # Routes config (host)   routes.docker.json (compose)
 ├── prometheus.yml              # Prometheus config
 ├── load-balancer-dashboard.json# Grafana dashboard as code
-├── docker-compose.yml          # Prometheus + Grafana stack
 ├── DESIGN.md                   # Architecture & design notes
 ├── package.json
 └── README.md
