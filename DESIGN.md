@@ -57,11 +57,18 @@ A flat list would be O(routes × segments) per request.
 - `ip_hash` — FNV-1a hash of the client IP for session affinity, with probing
   to skip unavailable backends.
 
+- `p2c` — **power of two choices**: sample two backends at random, pick the less
+  loaded. Mitzenmacher's result is that two random probes give load
+  *exponentially* closer to optimal than one, while a full least-loaded scan has
+  a known failure mode at scale — the "herd effect", where every chooser sees the
+  same momentarily-best backend and stampedes it. P2C's randomness breaks that.
+  O(1) per pick, and a strong general-purpose default (it's Envoy's `LEAST_REQUEST`).
+
 ### EWMA latency (not a lifetime average)
-Latency feeds `least_latency` and `least_loaded`. A naive cumulative average
-(`totalLatency / totalRequests`) never forgets: a backend that was briefly slow
-at startup stays "slow" forever and a backend that degrades later is masked by a
-long good history. We use an exponentially weighted moving average
+Latency feeds `least_latency`, `least_loaded`, and `p2c`. A naive cumulative
+average (`totalLatency / totalRequests`) never forgets: a backend that was briefly
+slow at startup stays "slow" forever and a backend that degrades later is masked
+by a long good history. We use an exponentially weighted moving average
 (`α = 0.3`) so recent samples dominate and old ones decay — the metric tracks
 *current* behaviour, which is what a routing decision needs.
 
@@ -94,6 +101,24 @@ killed, **0 requests fail**.
 
 **Upstream timeout.** `proxyTimeout` bounds how long we wait on a backend so a
 hung upstream fails over instead of hanging the client.
+
+**Hedged requests (tail-latency mitigation).** Failover only helps when a backend
+*errors*. A backend that's merely *slow* still drags the tail. For routes with
+`hedgeDelayMs` set, if the chosen backend hasn't responded within that delay, a
+backup request is fired to a second backend and the first response wins (the
+loser is aborted). This is the core idea of Dean & Barroso's *"The Tail at
+Scale"*. The benchmark shows p99 dropping ~48% (95 → 49 ms) with one slow backend
+in the pool.
+
+Trade-offs, made explicit:
+- It costs extra work — the slow primary's request is still in flight when the
+  backup fires, so p50 rises slightly. Hedging optimizes the *tail*, not the
+  median; the `hedgeDelayMs` knob (ideally set near the route's p95) bounds how
+  much duplicate load you take.
+- Only **body-less idempotent reads** (GET/HEAD) are hedged — you can't safely
+  duplicate a request with a body or side effects. This is implemented on a raw
+  `http` path (the proxy library pipes straight to the client, which can't race
+  two upstreams), reusing the same keep-alive agent and metrics.
 
 ## 5. Consistency / correctness model
 

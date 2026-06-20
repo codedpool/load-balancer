@@ -115,9 +115,26 @@ Routes to the healthy backend with the lowest combined score of active requests
 and normalized latency (`active + avgLatencyMs / 100`).
 **Use case**: Mixed workloads where both concurrency and latency matter.
 
-### 6. IP Hash — `ip_hash`
+### 6. Power of Two Choices — `p2c`
+Samples two backends at random and picks the less loaded (`active + latency/100`).
+Nearly as good as a full least-loaded scan at O(1) cost, and avoids the herd
+effect where every request piles onto whichever backend momentarily looks best.
+**Use case**: A strong general-purpose default at scale.
+
+### 7. IP Hash — `ip_hash`
 Consistent routing based on the client IP address (FNV-1a hash).
 **Use case**: Session affinity, stateful applications.
+
+### Tail-latency mitigation: hedged requests
+Independently of the strategy, a route can enable **hedging**: if the chosen
+backend hasn't responded within `hedgeDelayMs`, a backup request is sent to
+another backend and whichever responds first wins (the loser is aborted). This
+caps the tail latency caused by a single slow backend ("The Tail at Scale").
+Hedging applies to body-less reads (GET/HEAD) only. Enable per route:
+
+```json
+{ "prefix": "/read", "backends": ["http://a", "http://b"], "strategy": "p2c", "hedgeDelayMs": 20 }
+```
 
 ## Resilience
 
@@ -201,7 +218,8 @@ curl http://localhost:8080/users
 Each route has:
 - `prefix` — the path prefix to match (longest match wins)
 - `backends` — list of upstream backends (see below)
-- `strategy` — optional; one of `round_robin`, `weighted_round_robin`, `least_latency`, `least_active` (alias `least_connections`), `least_loaded`, `ip_hash` (default `round_robin`)
+- `strategy` — optional; one of `round_robin`, `weighted_round_robin`, `least_latency`, `least_active` (alias `least_connections`), `least_loaded`, `p2c`, `ip_hash` (default `round_robin`)
+- `hedgeDelayMs` — optional; if `> 0`, enables hedged requests for GET/HEAD on this route (fire a backup if the primary hasn't responded within this many ms)
 
 A backend entry may be a plain URL string, or an object with a `weight`
 (used by `weighted_round_robin`; defaults to `1`):
@@ -243,6 +261,8 @@ lb_route_errors_total{route, error_type}
 lb_route_request_size_bytes{route}
 lb_route_response_size_bytes{route}
 lb_route_strategy_changes_total{route, from_strategy, to_strategy}
+lb_route_hedged_requests_total{route}
+lb_route_hedge_wins_total{route}
 ```
 
 #### Backend-Level Metrics
@@ -396,17 +416,30 @@ process, no clustering):
 
 | Scenario              | req/sec | p50 (ms) | p99 (ms) | failed |
 |-----------------------|--------:|---------:|---------:|-------:|
-| baseline (direct)     |  12,100 |     2.0  |    10.0  |      0 |
-| via load balancer     |   1,475 |    32.0  |    69.0  |      0 |
-| 1 of 3 backends down  |   1,430 |    32.0  |    55.0  |      0 |
+| baseline (direct)     |  15,021 |     1.0  |     9.0  |      0 |
+| via load balancer     |   3,436 |    12.0  |    41.0  |      0 |
+| 1 of 3 backends down  |   6,187 |     7.0  |    11.0  |      0 |
 
-Takeaways: the keep-alive upstream pool sustains ~1,475 req/sec single-core with
-no failed requests, and **failover keeps the failure count at 0 even with a third
-of the pool down**. The gap to "direct" reflects that the balancer is itself a
-full HTTP server + client per request (and is doing per-request metrics); higher
-absolute throughput comes from running an instance per core (see
-[DESIGN.md](DESIGN.md) §7). Numbers are loopback, so they measure proxy/CPU
-overhead rather than real-network latency.
+The keep-alive upstream pool sustains thousands of req/sec single-core with **no
+failed requests, even with a third of the pool down** (failover). The gap to
+"direct" reflects that the balancer is itself a full HTTP server + client per
+request (plus per-request metrics); higher absolute throughput comes from running
+an instance per core (see [DESIGN.md](DESIGN.md) §7).
+
+### Tail latency (hedged requests)
+
+With one slow (80 ms) backend in a 3-backend pool and a 20 ms hedge delay:
+
+| Scenario   | req/sec | p50 (ms) | p99 (ms) |
+|------------|--------:|---------:|---------:|
+| no hedge   |   1,594 |     4.0  |    95.0  |
+| hedged     |   1,948 |    19.0  |    49.0  |
+
+Hedging cuts **p99 by ~48%** (95 → 49 ms): when the slow backend is picked, the
+backup answers first. The trade-off is honest — p50 rises (hedging adds load,
+since the slow primary's request is still in flight when the backup fires), so
+it's a tail-latency optimization, not a free win. Numbers are loopback, so they
+measure proxy/CPU overhead rather than real-network latency, and vary run to run.
 
 ## Project Structure
 
@@ -488,4 +521,4 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 - [ ] WebSocket proxying
 - [ ] Configuration hot-reload
 - [ ] Configuration validation
-- [ ] Tail-latency mitigation (power-of-two-choices, hedged requests)
+- [ ] Retry budgets + adaptive concurrency (load shedding)
