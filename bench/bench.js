@@ -22,6 +22,12 @@ const CONNECTIONS = Number(process.env.BENCH_CONNECTIONS || 50);
 const DURATION = Number(process.env.BENCH_DURATION || 10);
 const SLOW_MS = Number(process.env.BENCH_SLOW_MS || 80);
 const HEDGE_MS = Number(process.env.BENCH_HEDGE_MS || 20);
+// Hedging is a tail optimization that needs spare capacity, so it's measured at
+// moderate load (at saturation the duplicate requests just add load).
+const TAIL_CONN = Number(process.env.BENCH_TAIL_CONN || 12);
+const OVERLOAD_CONN = Number(process.env.BENCH_OVERLOAD_CONN || 200);
+const CAP = Number(process.env.BENCH_CAP || 20); // backend's concurrent capacity
+const WORK_MS = Number(process.env.BENCH_WORK_MS || 50);
 
 function makeBackend(tag, delayMs = 0) {
   return http.createServer((req, res) => {
@@ -32,6 +38,31 @@ function makeBackend(tag, delayMs = 0) {
     }
     if (delayMs > 0) setTimeout(() => res.end(tag), delayMs);
     else res.end(tag);
+  });
+}
+
+// A capacity-limited backend: at most `cap` requests in service at once, each
+// taking `workMs`; the rest queue, so latency balloons once offered load
+// exceeds capacity (the overload condition load shedding is meant to survive).
+function capacityBackend(cap, workMs) {
+  let active = 0;
+  const queue = [];
+  const serve = (res) => {
+    active += 1;
+    setTimeout(() => {
+      active -= 1;
+      res.end('OK');
+      if (queue.length) serve(queue.shift());
+    }, workMs);
+  };
+  return http.createServer((req, res) => {
+    if (req.url === '/health') {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+    if (active < cap) serve(res);
+    else queue.push(res);
   });
 }
 
@@ -80,9 +111,10 @@ async function main() {
   const baseline = await run('baseline', `http://127.0.0.1:${fastPorts[0]}/`);
   const vialb = await run('via-lb', `http://127.0.0.1:${lb}/svc`);
 
-  // Tail latency: one slow (SLOW_MS) backend in the pool.
-  const plain = await run('tail-plain', `http://127.0.0.1:${lb}/plain`);
-  const hedged = await run('tail-hedged', `http://127.0.0.1:${lb}/hedged`);
+  // Tail latency: one slow (SLOW_MS) backend in the pool, at moderate load.
+  const tailOpts = { connections: TAIL_CONN, duration: DURATION };
+  const plain = await autocannon({ url: `http://127.0.0.1:${lb}/plain`, ...tailOpts });
+  const hedged = await autocannon({ url: `http://127.0.0.1:${lb}/hedged`, ...tailOpts });
 
   // Degraded: kill a healthy backend, then drive /svc.
   await close(fast[1]);
@@ -97,13 +129,38 @@ async function main() {
   console.log(`Proxy overhead: ${((1 - vialb.requests.average / baseline.requests.average) * 100).toFixed(1)}%   ` +
     `failover failures (1/3 down): ${(degraded.non2xx || 0) + (degraded.errors || 0)}`);
 
-  console.log(`\nTail latency (one ${SLOW_MS}ms backend in a 3-backend pool, hedge after ${HEDGE_MS}ms)`);
+  console.log(`\nTail latency (one ${SLOW_MS}ms backend in a 3-backend pool, hedge after ${HEDGE_MS}ms, ${TAIL_CONN} conns)`);
   console.log('Scenario          req/sec  p50 (ms)  p99 (ms)   failed');
   console.log('-------------------------------------------------------------');
   console.log(row('no hedge', plain));
   console.log(row('hedged', hedged));
   console.log(`p99 reduction from hedging: ${((1 - hedged.latency.p99 / plain.latency.p99) * 100).toFixed(1)}%\n`);
 
+  // --- Overload: a capacity-limited backend hammered beyond its capacity ---
+  const cap = capacityBackend(CAP, WORK_MS);
+  const capPort = await listen(cap);
+  const capRoute = [{ prefix: '/cap', backends: [`http://127.0.0.1:${capPort}`] }];
+  const noShed = await start({
+    port: 0, adminPort: 0, metrics: false, healthIntervalMs: 0, rate: 1e9, burst: 1e9, routes: capRoute,
+  });
+  const shed = await start({
+    port: 0, adminPort: 0, metrics: false, healthIntervalMs: 0, rate: 1e9, burst: 1e9,
+    adaptiveConcurrency: true, routes: capRoute,
+  });
+  const ovOpts = { connections: OVERLOAD_CONN, duration: DURATION };
+  const overloadPlain = await autocannon({ url: `http://127.0.0.1:${noShed.ports.data}/cap`, ...ovOpts });
+  const overloadShed = await autocannon({ url: `http://127.0.0.1:${shed.ports.data}/cap`, ...ovOpts });
+
+  console.log(`\nOverload: backend capacity ${CAP} @ ${WORK_MS}ms, offered ${OVERLOAD_CONN} concurrent`);
+  console.log('Scenario          req/sec  p50 (ms)  p99 (ms)   shed(503)');
+  console.log('-------------------------------------------------------------');
+  console.log(row('no shedding', overloadPlain));
+  console.log(row('adaptive', overloadShed));
+  console.log(`p99 under overload: ${overloadPlain.latency.p99.toFixed(0)}ms -> ${overloadShed.latency.p99.toFixed(0)}ms ` +
+    `(adaptive shed ${(overloadShed.non2xx || 0)} excess requests fast instead of queueing)\n`);
+
+  await Promise.all([noShed.stop(), shed.stop()]);
+  await close(cap);
   await ctx.stop();
   await Promise.all([...fast, slow].map(close));
 }
