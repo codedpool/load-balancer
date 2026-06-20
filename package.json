@@ -9,7 +9,8 @@
     "start:cluster": "node src/cluster.js",
     "mock": "node mock_servers/start.js",
     "test": "node --test",
-    "bench": "node bench/bench.js"
+    "bench": "node bench/bench.js",
+    "demo:chaos": "node scripts/chaos-demo.js"
   },
   "engines": {
     "node": ">=18"
