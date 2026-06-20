@@ -7,24 +7,34 @@ A high-performance HTTP load balancer written in Node.js with health checking, m
 - [Features](#features)
 - [Architecture](#architecture)
 - [Load Balancing Strategies](#load-balancing-strategies)
+- [Resilience](#resilience)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [Monitoring & Metrics](#monitoring--metrics)
 - [Admin API](#admin-api)
+- [Testing](#testing)
+- [Performance](#performance)
 - [Project Structure](#project-structure)
 - [Usage Examples](#usage-examples)
+- [Design Notes](#design-notes)
 - [License](#license)
 - [Roadmap](#roadmap)
 
 ## Features
 
 ### Core Functionality
-- Multiple load balancing strategies (Round Robin, Least Latency, Least Active, IP Hash)
-- Active health checking with automatic failure/recovery detection
-- HTTP reverse proxying (powered by `http-proxy`)
-- Per-client token-bucket rate limiting
+- Multiple load balancing strategies (Round Robin, Weighted Round Robin, Least Latency, Least Active/Connections, Least Loaded, IP Hash)
+- HTTP reverse proxying over a pooled keep-alive agent (powered by `http-proxy`)
+- Per-client token-bucket rate limiting with idle-bucket eviction
 - Request/response size tracking
+
+### Resilience
+- Active health checking with automatic failure/recovery detection
+- Per-backend circuit breaker (passive outlier ejection) with half-open recovery
+- Automatic failover/retry across backends for idempotent requests
+- Upstream timeouts so a hung backend fails over instead of hanging the client
+- Graceful shutdown (drains in-flight requests)
 
 ### Monitoring & Observability
 - Prometheus metrics endpoint (`/metrics`)
@@ -102,6 +112,31 @@ and normalized latency (`active + avgLatencyMs / 100`).
 Consistent routing based on the client IP address (FNV-1a hash).
 **Use case**: Session affinity, stateful applications.
 
+## Resilience
+
+A single failing backend should never surface as a client-visible error. Two
+independent mechanisms detect and route around bad backends:
+
+- **Active health checks** — periodic `GET /health` flips each backend's alive
+  flag (proactive: catches a down backend before a user hits it).
+- **Circuit breaker** — per-backend `closed → open → half-open` state machine
+  driven by *real* request outcomes. After N consecutive failures (or 5xx
+  responses) a backend is ejected from selection; after a cooldown it gets trial
+  requests and recovers on success (reactive: catches in-band failures fast).
+
+On top of selection:
+
+- **Failover** — a connection-level failure (refused/reset/timeout) on an
+  **idempotent** request (GET/HEAD/PUT/DELETE/OPTIONS) is retried on the next
+  backend. Non-idempotent requests (POST/PATCH) are not retried, to avoid
+  duplicate side effects.
+- **Upstream timeout** — `PROXY_TIMEOUT_MS` bounds the wait on a backend so a
+  hung upstream fails over instead of hanging the client.
+- **Graceful shutdown** — `SIGINT`/`SIGTERM` stop new connections and drain
+  in-flight requests before exit.
+
+See [DESIGN.md](DESIGN.md) for the rationale and trade-offs.
+
 ## Installation
 
 ### Prerequisites
@@ -174,7 +209,12 @@ A backend entry may be a plain URL string, or an object with a `weight`
 ```
 
 ### Environment Variables
-- `PORT` — port the load balancer listens on (default `8080`)
+- `PORT` — data-plane (proxy) port (default `8080`)
+- `ADMIN_PORT` — control-plane (admin API) port (default `8090`)
+- `ADMIN_TOKEN` — if set, admin requests must present it (see Admin API); if unset, the admin API is unauthenticated and logs a warning
+- `HEALTH_INTERVAL_MS` — active health-check interval (default `5000`)
+- `PROXY_TIMEOUT_MS` — upstream request timeout (default `30000`)
+- `LOG_LEVEL` — `silent` | `error` | `info` (default `info`)
 
 ## Monitoring & Metrics
 
@@ -237,7 +277,14 @@ Prometheus is configured (`prometheus.yml`) to scrape the load balancer at
 
 ## Admin API
 
-The admin API is available at `http://localhost:8080/admin/`.
+The admin API (control plane) runs on a **separate port** from proxied traffic —
+`http://localhost:8090/admin/` by default (`ADMIN_PORT`). When `ADMIN_TOKEN` is
+set, every request must present it via `Authorization: Bearer <token>` or the
+`X-Admin-Token` header; otherwise the request is rejected with `401`.
+
+```bash
+curl -H "X-Admin-Token: $ADMIN_TOKEN" http://localhost:8090/admin/list
+```
 
 #### List Routes
 ```bash
@@ -272,6 +319,47 @@ Content-Type: application/json
 }
 ```
 
+## Testing
+
+Tests use Node's built-in test runner (no extra test framework):
+
+```bash
+npm test
+```
+
+Coverage includes unit tests (Trie longest-prefix matching, all balancing
+strategies, weighted distribution, circuit-breaker state transitions, rate-limit
+refill/eviction, EWMA latency) and integration tests that boot the server on
+ephemeral ports and exercise routing, round-robin distribution, failover past a
+dead backend, idempotent-vs-non-idempotent retry behaviour, 404 handling, and
+admin token auth.
+
+## Performance
+
+Benchmark harness (autocannon) comparing a backend hit directly vs. through the
+load balancer, plus a degraded run with one backend killed:
+
+```bash
+npm run bench
+```
+
+Sample run — Node 22, i5-12500H, 50 connections × 10s, loopback (single Node
+process, no clustering):
+
+| Scenario              | req/sec | p50 (ms) | p99 (ms) | failed |
+|-----------------------|--------:|---------:|---------:|-------:|
+| baseline (direct)     |  12,100 |     2.0  |    10.0  |      0 |
+| via load balancer     |   1,475 |    32.0  |    69.0  |      0 |
+| 1 of 3 backends down  |   1,430 |    32.0  |    55.0  |      0 |
+
+Takeaways: the keep-alive upstream pool sustains ~1,475 req/sec single-core with
+no failed requests, and **failover keeps the failure count at 0 even with a third
+of the pool down**. The gap to "direct" reflects that the balancer is itself a
+full HTTP server + client per request (and is doing per-request metrics); higher
+absolute throughput comes from running an instance per core (see
+[DESIGN.md](DESIGN.md) §7). Numbers are loopback, so they measure proxy/CPU
+overhead rather than real-network latency.
+
 ## Project Structure
 
 ```
@@ -279,7 +367,8 @@ load-balancer/
 ├── src/
 │   ├── core/
 │   │   ├── backend.js          # Backend, BackendPool, selection strategies
-│   │   ├── loadbalancer.js     # Core load balancer logic + health checks
+│   │   ├── loadbalancer.js     # Core balancer: proxy, failover, health checks
+│   │   ├── circuitBreaker.js   # Per-backend circuit breaker
 │   │   ├── trie.js             # Path-prefix Trie for route matching
 │   │   └── metrics.js          # Prometheus metrics
 │   ├── middleware/
@@ -287,10 +376,13 @@ load-balancer/
 │   ├── controller/
 │   │   └── admin.js            # Admin API handlers
 │   ├── logger/
-│   │   └── logger.js           # Structured JSON logging
+│   │   └── logger.js           # Structured JSON logging (level-gated)
 │   ├── utils/
 │   │   └── utils.js            # HTTP helpers
-│   └── server.js               # Application entry point
+│   └── server.js               # Entry point (data + control plane)
+├── tests/                      # Unit + integration tests (node:test)
+├── bench/
+│   └── bench.js                # autocannon load benchmark
 ├── mock_servers/               # Mock backend servers for testing
 │   ├── backend_user1.js ... backend_post2.js
 │   └── start.js                # Spawns all mock servers
@@ -298,6 +390,7 @@ load-balancer/
 ├── prometheus.yml              # Prometheus config
 ├── load-balancer-dashboard.json# Grafana dashboard as code
 ├── docker-compose.yml          # Prometheus + Grafana stack
+├── DESIGN.md                   # Architecture & design notes
 ├── package.json
 └── README.md
 ```
@@ -305,34 +398,44 @@ load-balancer/
 ## Usage Examples
 
 ```bash
+# Admin API is on the control-plane port (8090) and token-gated when ADMIN_TOKEN is set
+AUTH="-H X-Admin-Token:$ADMIN_TOKEN"
+
 # Add a backend to an existing route
-curl -X POST http://localhost:8080/admin/add-backend \
+curl -X POST http://localhost:8090/admin/add-backend $AUTH \
   -H "Content-Type: application/json" \
   -d '{"prefix":"/users","url":"http://localhost:8084","strategy":"round_robin"}'
 
 # Remove a backend from a route
-curl -X POST http://localhost:8080/admin/remove-backend \
+curl -X POST http://localhost:8090/admin/remove-backend $AUTH \
   -H "Content-Type: application/json" \
   -d '{"prefix":"/users","url":"http://localhost:8084"}'
 
 # Update an entire route configuration
-curl -X PUT http://localhost:8080/admin/update \
+curl -X PUT http://localhost:8090/admin/update $AUTH \
   -H "Content-Type: application/json" \
   -d '{"prefix":"/users","backends":["http://localhost:8081","http://localhost:8082"],"strategy":"least_active"}'
 
 # List all routes and their backends
-curl http://localhost:8080/admin/list
+curl $AUTH http://localhost:8090/admin/list
 
-# Send test traffic
+# Send test traffic (data plane, port 8080)
 for i in $(seq 1 100); do curl -s http://localhost:8080/users > /dev/null; done
 ```
+
+## Design Notes
+
+See [DESIGN.md](DESIGN.md) for the architecture, data-structure and algorithm
+choices (Trie routing, smooth weighted round robin, EWMA latency), the failure
+model (health checks + circuit breaker + failover), the consistency model, and
+the horizontal-scaling story.
 
 ## License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
 ## Roadmap
-- [ ] Circuit breaker pattern
 - [ ] WebSocket proxying
 - [ ] Configuration hot-reload
 - [ ] Configuration validation
+- [ ] Multi-core (cluster) with shared rate-limit state
