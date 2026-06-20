@@ -1,0 +1,20 @@
+{
+  "routes": [
+    {
+      "prefix": "/users",
+      "backends": [
+        "http://localhost:8081",
+        "http://localhost:8083"
+      ]
+    },
+    {
+      "prefix": "/posts",
+      "backends": [
+        "http://localhost:8091",
+        "http://localhost:8092"
+      ],
+      "strategy": "least_latency"
+
+    }
+  ]
+}
