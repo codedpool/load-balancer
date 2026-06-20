@@ -34,6 +34,8 @@ A high-performance HTTP load balancer written in Node.js with health checking, m
 - Active health checking with automatic failure/recovery detection
 - Per-backend circuit breaker (passive outlier ejection) with half-open recovery
 - Automatic failover/retry across backends for idempotent requests
+- Retry budget — caps retries as a fraction of traffic to prevent retry storms
+- Adaptive concurrency limiting / load shedding to survive overload (opt-in)
 - Upstream timeouts so a hung backend fails over instead of hanging the client
 - Graceful shutdown (drains in-flight requests)
 
@@ -245,6 +247,7 @@ A backend entry may be a plain URL string, or an object with a `weight`
 - `REDIS_URL` — if set, rate limiting uses Redis (shared across workers); otherwise in-memory
 - `WORKERS` — cluster worker count (default: CPU count; only used by `start:cluster`)
 - `METRICS_PORT` — aggregated metrics port in cluster mode (default `9100`)
+- `ADAPTIVE_CONCURRENCY` — set to `true` to enable adaptive concurrency limiting / load shedding
 
 ## Monitoring & Metrics
 
@@ -263,6 +266,11 @@ lb_route_response_size_bytes{route}
 lb_route_strategy_changes_total{route, from_strategy, to_strategy}
 lb_route_hedged_requests_total{route}
 lb_route_hedge_wins_total{route}
+lb_retries_total{route}
+lb_retries_exhausted_total{route}
+lb_concurrency_limit
+lb_inflight_requests
+lb_shed_requests_total
 ```
 
 #### Backend-Level Metrics
@@ -395,12 +403,13 @@ npm test
 ```
 
 Coverage includes unit tests (Trie longest-prefix matching, all balancing
-strategies, weighted distribution, circuit-breaker state transitions, rate-limit
-refill/eviction, EWMA latency, and the Redis limiter's shared-budget behaviour
-across workers) and integration tests that boot the server on ephemeral ports
-and exercise routing, round-robin distribution, failover past a dead backend,
-idempotent-vs-non-idempotent retry behaviour, 404 handling, and admin token
-auth.
+strategies, weighted distribution, p2c, circuit-breaker state transitions,
+rate-limit refill/eviction, EWMA latency, the Redis limiter's shared-budget
+behaviour across workers, retry-budget storm prevention, and adaptive-limiter
+shrink/grow) and integration tests that boot the server on ephemeral ports and
+exercise routing, round-robin distribution, failover past a dead backend,
+idempotent-vs-non-idempotent retry behaviour, hedged-request tail bounding,
+load-shedding 503s, 404 handling, and admin token auth.
 
 ## Performance
 
@@ -428,18 +437,38 @@ an instance per core (see [DESIGN.md](DESIGN.md) §7).
 
 ### Tail latency (hedged requests)
 
-With one slow (80 ms) backend in a 3-backend pool and a 20 ms hedge delay:
+One slow (80 ms) backend in a 3-backend pool, 20 ms hedge delay, **moderate load
+(12 connections)**:
 
 | Scenario   | req/sec | p50 (ms) | p99 (ms) |
 |------------|--------:|---------:|---------:|
-| no hedge   |   1,594 |     4.0  |    95.0  |
-| hedged     |   1,948 |    19.0  |    49.0  |
+| no hedge   |     384 |     2.0  |    96.0  |
+| hedged     |   1,094 |     4.0  |    32.0  |
 
-Hedging cuts **p99 by ~48%** (95 → 49 ms): when the slow backend is picked, the
-backup answers first. The trade-off is honest — p50 rises (hedging adds load,
-since the slow primary's request is still in flight when the backup fires), so
-it's a tail-latency optimization, not a free win. Numbers are loopback, so they
-measure proxy/CPU overhead rather than real-network latency, and vary run to run.
+Hedging cuts **p99 by ~67%** (96 → 32 ms): when the slow backend is picked, the
+backup answers first. Important caveat (measured): hedging duplicates work, so it
+only helps when there's **spare capacity**. At saturation (e.g. 50 connections
+against 2 backends) the extra load cancels the benefit — which is exactly why
+real systems gate hedging on utilization. It's a tail optimization, not a free win.
+
+### Overload (load shedding)
+
+A capacity-limited backend (20 concurrent @ 50 ms) hit with **200 concurrent**
+connections — far beyond its capacity:
+
+| Scenario     | req/sec | p50 (ms) | p99 (ms) | shed (503) |
+|--------------|--------:|---------:|---------:|-----------:|
+| no shedding  |     320 |    624.0 |    651.0 |          0 |
+| adaptive     |   9,269 |     12.0 |    104.0 |     91,049 |
+
+Without shedding, requests pile into the backend's queue and **every** request
+slows to ~650 ms (brownout). The adaptive limiter detects the latency inflation,
+caps in-flight work near the backend's real capacity, and **sheds excess fast
+with 503** — keeping served latency an order of magnitude lower. Enable with
+`ADAPTIVE_CONCURRENCY=true`.
+
+Numbers are loopback (proxy/CPU overhead, not real-network latency) and vary run
+to run.
 
 ## Project Structure
 
@@ -448,13 +477,16 @@ load-balancer/
 ├── src/
 │   ├── core/
 │   │   ├── backend.js          # Backend, BackendPool, selection strategies
-│   │   ├── loadbalancer.js     # Core balancer: proxy, failover, health checks
+│   │   ├── loadbalancer.js     # Core balancer: proxy, failover, hedging, health
 │   │   ├── circuitBreaker.js   # Per-backend circuit breaker
+│   │   ├── adaptiveLimiter.js  # Gradient adaptive concurrency limit
 │   │   ├── trie.js             # Path-prefix Trie for route matching
 │   │   └── metrics.js          # Prometheus metrics
 │   ├── middleware/
 │   │   ├── rateLimit.js        # In-memory token-bucket rate limiter
-│   │   └── redisRateLimiter.js # Distributed (Redis/Lua) rate limiter
+│   │   ├── redisRateLimiter.js # Distributed (Redis/Lua) rate limiter
+│   │   ├── retryBudget.js      # Retry-storm prevention
+│   │   └── loadShed.js         # Load-shedding middleware (503 on overload)
 │   ├── controller/
 │   │   └── admin.js            # Admin API handlers
 │   ├── logger/
@@ -519,6 +551,6 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 ## Roadmap
 - [ ] WebSocket proxying
-- [ ] Configuration hot-reload
-- [ ] Configuration validation
-- [ ] Retry budgets + adaptive concurrency (load shedding)
+- [ ] Configuration hot-reload + validation
+- [ ] Consistent hashing (Maglev) for sticky sessions
+- [ ] TLS termination + HTTP/2

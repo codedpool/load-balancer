@@ -120,6 +120,36 @@ Trade-offs, made explicit:
   `http` path (the proxy library pipes straight to the client, which can't race
   two upstreams), reusing the same keep-alive agent and metrics.
 
+### Preventing cascading failure
+
+Resilience mechanisms can themselves *cause* outages if they amplify load. Two
+guards address that:
+
+**Retry budget.** Retries are great until a backend wobble makes *everything*
+retry at once — now the fleet sees 2× traffic exactly when it's least able to
+cope, and the failure cascades. So retries draw from a budget: a token bucket
+where each request deposits `ratio` tokens (default 0.2) plus a `minPerSec` floor,
+and each retry withdraws one. Retries are essentially free when rare, but globally
+capped at ~20% of traffic — a wobble can't become a storm. Same design as
+Envoy/Finagle retry budgets, and strictly better than a fixed per-request retry
+count, which has no global ceiling.
+
+**Adaptive concurrency / load shedding.** Under overload, the worst outcome is a
+*brownout*: unbounded queues where every request times out and nothing succeeds.
+Better to serve what you can and reject the rest fast. The limiter derives a
+max-in-flight from observed latency using a gradient algorithm (Netflix
+concurrency-limits / TCP Vegas):
+
+> `gradient = minRTT / recentRTT` (1.0 = no queueing, < 1 = congestion)
+> `newLimit = limit × gradient + √limit` (smoothed)
+
+When latency inflates above the no-load baseline (`minRTT`), the gradient drops
+and the limit shrinks, shedding excess with a fast `503 + Retry-After`; when
+healthy, it grows back. It needs no hand-tuned magic number — it discovers the
+backend's real capacity. The benchmark shows p99 under 200-connection overload
+dropping from **651 ms (brownout) to 104 ms** while shedding the excess. Load
+shedding sits in front of the balancer and is opt-in (`ADAPTIVE_CONCURRENCY`).
+
 ## 5. Consistency / correctness model
 
 All shared state (rate-limiter buckets, backend counters, breaker state) lives
