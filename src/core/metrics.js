@@ -54,6 +54,18 @@ export const RouteStrategyChanges = new client.Counter({
   labelNames: ['route', 'from_strategy', 'to_strategy'],
 });
 
+export const RouteHedgedRequests = new client.Counter({
+  name: 'lb_route_hedged_requests_total',
+  help: 'Number of requests for which a hedge (backup) request was fired',
+  labelNames: ['route'],
+});
+
+export const RouteHedgeWins = new client.Counter({
+  name: 'lb_route_hedge_wins_total',
+  help: 'Number of requests where the hedge (backup) backend responded first',
+  labelNames: ['route'],
+});
+
 // ===== BACKEND-LEVEL METRICS =====
 
 export const BackendHealthStatus = new client.Gauge({

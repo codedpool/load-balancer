@@ -13,6 +13,8 @@ import {
   RouteRequestSize,
   RouteResponseSize,
   RouteStrategyChanges,
+  RouteHedgedRequests,
+  RouteHedgeWins,
   BackendHealthStatus,
   BackendRequestsTotal,
   BackendRequestDuration,
@@ -27,6 +29,9 @@ import {
 // Methods safe to retry on another backend without risking duplicate side
 // effects. Non-idempotent requests (POST/PATCH) are never retried.
 const IDEMPOTENT = new Set(['GET', 'HEAD', 'PUT', 'DELETE', 'OPTIONS']);
+
+// Hedging duplicates the request, so it's restricted to safe, body-less reads.
+const HEDGEABLE = new Set(['GET', 'HEAD']);
 
 function classifyError(err) {
   switch (err?.code) {
@@ -68,9 +73,10 @@ export class LoadBalancer {
     });
   }
 
-  addRoute(prefix, backends, strategy) {
+  addRoute(prefix, backends, strategy, options = {}) {
     const pool = BackendPool.fromSpecs(backends, this.breakerOptions);
     pool.strategy = strategy;
+    pool.hedgeDelayMs = options.hedgeDelayMs ?? 0;
     this.routes.set(prefix, pool);
     this.trie.insert(prefix);
   }
@@ -90,6 +96,14 @@ export class LoadBalancer {
     }
 
     const pool = this.routes.get(prefix);
+
+    // Hedged path: for routes with hedging enabled and body-less reads, race a
+    // backup request to cut tail latency. Everything else uses the standard path.
+    if (pool.hedgeDelayMs > 0 && HEDGEABLE.has(req.method) && pool.backends.length > 1) {
+      this.handleHedged(req, res, prefix, pool, start, requestId, path);
+      return;
+    }
+
     RouteActiveRequests.labels(prefix).inc();
 
     const contentLength = Number(req.headers['content-length'] || 0);
@@ -210,6 +224,174 @@ export class LoadBalancer {
     };
 
     attempt();
+  }
+
+  // Hedged request path: send to one backend, and if it hasn't responded within
+  // pool.hedgeDelayMs, fire a backup to a second backend and take whichever
+  // responds first (aborting the loser). Cuts tail latency caused by a single
+  // slow backend ("The Tail at Scale"). GET/HEAD only — see HEDGEABLE.
+  handleHedged(req, res, prefix, pool, start, requestId, path) {
+    RouteActiveRequests.labels(prefix).inc();
+    const clientIP = req.socket.remoteAddress ?? '';
+
+    const tried = new Set();
+    const inflight = new Map(); // backend -> AbortController
+    let settled = false; // a winner has been chosen (or final error)
+    let routeFinalized = false;
+    let hedgeFired = false;
+    let primary = null;
+    let winner = null;
+    let statusCode = 0;
+    let responseSize = 0;
+    let hedgeTimer = null;
+
+    const finalizeRoute = () => {
+      if (routeFinalized) return;
+      routeFinalized = true;
+      const sc = statusCode || 502;
+      const duration = performance.now() - start;
+      RouteRequestsTotal.labels(prefix, req.method, String(sc)).inc();
+      RouteRequestDuration.labels(prefix, req.method).observe(duration / 1000);
+      if (responseSize > 0) RouteResponseSize.labels(prefix).observe(responseSize);
+      if (sc >= 400) {
+        RouteErrorsTotal.labels(prefix, sc >= 500 ? 'server_error' : 'client_error').inc();
+      }
+      RouteActiveRequests.labels(prefix).dec();
+      logger.info(requestId, 'Routing request (hedged)', {
+        method: req.method,
+        path,
+        target: winner ? winner.target : '-',
+        duration: `${duration.toFixed(3)}ms`,
+      });
+    };
+
+    const onResponse = (backend, upRes, attemptStart) => {
+      if (settled) {
+        upRes.destroy();
+        return;
+      }
+      settled = true;
+      winner = backend;
+      statusCode = upRes.statusCode;
+      clearTimeout(hedgeTimer);
+      if (hedgeFired && backend !== primary) {
+        RouteHedgeWins.labels(prefix).inc();
+      }
+      // Abort the losing in-flight attempt(s).
+      for (const [b, ctrl] of inflight) {
+        if (b !== backend) ctrl.abort();
+      }
+
+      const duration = performance.now() - attemptStart;
+      backend.recordRequest(duration);
+      if (upRes.statusCode >= 500) backend.recordFailure();
+      else backend.recordSuccess();
+      this.updateBackendMetrics(prefix, backend, duration, upRes.statusCode);
+
+      res.writeHead(upRes.statusCode, upRes.headers);
+      upRes.on('data', (chunk) => {
+        responseSize += chunk.length;
+      });
+      upRes.on('error', () => {
+        if (!res.writableEnded) res.end();
+      });
+      upRes.pipe(res);
+      res.on('finish', finalizeRoute);
+      res.on('close', finalizeRoute);
+    };
+
+    const failAll = () => {
+      settled = true;
+      statusCode = 502;
+      clearTimeout(hedgeTimer);
+      if (!res.headersSent) {
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
+        res.end('Bad Gateway\n');
+      } else if (!res.writableEnded) {
+        res.end();
+      }
+      RouteErrorsTotal.labels(prefix, 'proxy_error').inc();
+      finalizeRoute();
+    };
+
+    const onError = (backend, err) => {
+      if (settled) return; // aborted loser, or error after a winner was chosen
+      BackendFailuresTotal.labels(prefix, backend.target, backend.host, classifyError(err)).inc();
+      backend.recordFailure();
+      if (!hedgeFired) {
+        // Primary failed before the hedge timer — fail over to the backup now.
+        clearTimeout(hedgeTimer);
+        fireBackup();
+      } else if (inflight.size === 0) {
+        failAll();
+      }
+    };
+
+    const fire = (backend) => {
+      tried.add(backend);
+      const ctrl = new AbortController();
+      inflight.set(backend, ctrl);
+      const attemptStart = performance.now();
+      backend.incActive();
+      BackendActiveConnections.labels(prefix, backend.target, backend.host).inc();
+      BackendSelectionTotal.labels(prefix, backend.target, backend.host, pool.strategy).inc();
+
+      const u = new URL(backend.target);
+      const headers = { ...req.headers, host: u.host };
+      delete headers.connection;
+      const xff = req.headers['x-forwarded-for'];
+      headers['x-forwarded-for'] = xff ? `${xff}, ${clientIP}` : clientIP;
+
+      const upstreamReq = http.request(
+        {
+          protocol: u.protocol,
+          hostname: u.hostname,
+          port: u.port,
+          method: req.method,
+          path: req.url,
+          headers,
+          agent: this.agent,
+          signal: ctrl.signal,
+        },
+        (upRes) => {
+          inflight.delete(backend);
+          backend.decActive();
+          BackendActiveConnections.labels(prefix, backend.target, backend.host).dec();
+          onResponse(backend, upRes, attemptStart);
+        }
+      );
+      upstreamReq.on('error', (err) => {
+        inflight.delete(backend);
+        backend.decActive();
+        BackendActiveConnections.labels(prefix, backend.target, backend.host).dec();
+        onError(backend, err);
+      });
+      upstreamReq.end();
+    };
+
+    const fireBackup = () => {
+      if (settled || hedgeFired) return;
+      hedgeFired = true;
+      const backup = pool.getNextBackend(clientIP, tried);
+      if (backup) {
+        RouteHedgedRequests.labels(prefix).inc();
+        fire(backup);
+      } else if (inflight.size === 0) {
+        failAll();
+      }
+    };
+
+    primary = pool.getNextBackend(clientIP);
+    if (!primary) {
+      RouteErrorsTotal.labels(prefix, 'no_backend_available').inc();
+      statusCode = 503;
+      res.writeHead(503, { 'Content-Type': 'text/plain' });
+      res.end('No backend available\n');
+      finalizeRoute();
+      return;
+    }
+    fire(primary);
+    hedgeTimer = setTimeout(fireBackup, pool.hedgeDelayMs);
   }
 
   updateBackendMetrics(routePrefix, backend, durationMs, statusCode) {

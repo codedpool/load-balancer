@@ -38,7 +38,9 @@ export async function start(opts = {}) {
     routes = cfg.routes;
   }
   for (const r of routes) {
-    lb.addRoute(r.prefix, r.backends, parseStrategy(r.strategy));
+    lb.addRoute(r.prefix, r.backends, parseStrategy(r.strategy), {
+      hedgeDelayMs: r.hedgeDelayMs ?? 0,
+    });
   }
 
   if (healthIntervalMs > 0) {
