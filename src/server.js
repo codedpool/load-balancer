@@ -31,12 +31,18 @@ export async function start(opts = {}) {
     initMetrics();
   }
 
-  const lb = new LoadBalancer({ proxyTimeoutMs, maxRetries: opts.maxRetries ?? 2 });
+  const lb = new LoadBalancer({
+    proxyTimeoutMs,
+    maxRetries: opts.maxRetries ?? 2,
+    breakerOptions: opts.breakerOptions,
+    retryBudget: opts.retryBudget,
+    maxSockets: opts.maxSockets,
+  });
   const rl = await buildRateLimiter(opts);
 
   let routes = opts.routes;
   if (!routes) {
-    const cfg = JSON.parse(await readFile(opts.routesPath ?? DEFAULT_ROUTES, 'utf8'));
+    const cfg = JSON.parse(await readFile(opts.routesPath ?? process.env.ROUTES_PATH ?? DEFAULT_ROUTES, 'utf8'));
     routes = cfg.routes;
   }
   for (const r of routes) {
