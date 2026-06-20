@@ -20,14 +20,17 @@ export async function start(opts = {}) {
   const adminToken = opts.adminToken ?? process.env.ADMIN_TOKEN ?? '';
   const healthIntervalMs = opts.healthIntervalMs ?? Number(process.env.HEALTH_INTERVAL_MS || 5000);
   const proxyTimeoutMs = opts.proxyTimeoutMs ?? Number(process.env.PROXY_TIMEOUT_MS || 30000);
-  const enableMetrics = opts.metrics !== false;
+  const enableMetrics = opts.metrics !== false; // collect metrics
+  // Serve the /metrics endpoint here. In cluster mode the primary aggregates
+  // and serves them instead, so workers set this to false.
+  const serveMetricsEndpoint = opts.serveMetricsEndpoint ?? enableMetrics;
 
   if (enableMetrics) {
     initMetrics();
   }
 
   const lb = new LoadBalancer({ proxyTimeoutMs, maxRetries: opts.maxRetries ?? 2 });
-  const rl = new RateLimiter(opts.rate ?? 5, opts.burst ?? 10);
+  const rl = await buildRateLimiter(opts);
 
   let routes = opts.routes;
   if (!routes) {
@@ -46,7 +49,7 @@ export async function start(opts = {}) {
   const proxied = rateLimitMiddleware(rl, (req, res) => lb.handle(req, res));
   const dataServer = http.createServer((req, res) => {
     const path = req.url.split('?')[0];
-    if (enableMetrics && path === '/metrics') {
+    if (serveMetricsEndpoint && path === '/metrics') {
       register.metrics().then((m) => {
         res.writeHead(200, { 'Content-Type': register.contentType });
         res.end(m);
@@ -95,6 +98,26 @@ export async function start(opts = {}) {
     stop,
     ports: { data: dataServer.address().port, admin: adminServer.address().port },
   };
+}
+
+// Picks the rate limiter: an injected one (tests), Redis-backed when REDIS_URL
+// is configured (shared across workers/instances), otherwise in-memory.
+async function buildRateLimiter(opts) {
+  if (opts.rateLimiter) {
+    return opts.rateLimiter;
+  }
+  const redisUrl = opts.redisUrl ?? process.env.REDIS_URL;
+  if (redisUrl) {
+    const [{ RedisRateLimiter }, { default: Redis }] = await Promise.all([
+      import('./middleware/redisRateLimiter.js'),
+      import('ioredis'),
+    ]);
+    const client = new Redis(redisUrl, { maxRetriesPerRequest: 1, enableOfflineQueue: false });
+    client.on('error', (e) => console.error('redis error:', e.message));
+    console.log(`Rate limiter: Redis (${redisUrl})`);
+    return new RedisRateLimiter({ client, rate: opts.rate ?? 5, burst: opts.burst ?? 10 });
+  }
+  return new RateLimiter(opts.rate ?? 5, opts.burst ?? 10);
 }
 
 function listen(server, port) {
