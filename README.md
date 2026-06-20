@@ -329,11 +329,10 @@ for i in $(seq 1 100); do curl -s http://localhost:8080/users > /dev/null; done
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
 ## Roadmap
 - [ ] Circuit breaker pattern
 - [ ] WebSocket proxying
 - [ ] Configuration hot-reload
 - [ ] Configuration validation
-```
