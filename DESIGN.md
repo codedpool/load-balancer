@@ -117,23 +117,48 @@ preserved.
   correlation. Level-gated (`LOG_LEVEL`) — per-request INFO logging is a
   throughput footgun under load, so it can be turned down.
 
-## 7. Scaling story (what I'd do next)
+## 7. Scaling
 
-This balancer is a single Node process. To scale:
+### 7.1 Multi-core (implemented)
 
-1. **Vertical / multi-core**: run one instance per core behind the OS
-   (`SO_REUSEPORT`) or `cluster`. The catch: **in-process state diverges** across
-   workers — each would have its own rate-limiter buckets and breaker state.
-   - Rate limiting → move to a shared store (Redis) with an atomic
-     token-bucket Lua script, or accept per-worker limits (limit × workers).
-   - Circuit-breaker / health → either per-worker (acceptable; each learns
-     independently) or shared via a coordination channel.
-2. **Horizontal**: multiple hosts behind a Layer-4 balancer (or DNS). Health and
-   config need a shared source of truth — a control plane pushing config, or a
-   service-discovery backend (Consul/etcd) instead of a static `routes.json`.
-3. **Config**: today config is static at boot + mutable via the admin API, but
-   changes aren't persisted. Next step is hot-reload from a watched file or a
-   config service, with validation on load.
+`src/cluster.js` forks one worker per CPU behind a shared listen socket (OS
+round-robin on Linux, shared handle on Windows) and restarts dead workers.
+
+**The state-divergence problem.** Each worker is a separate process with its own
+memory, so anything held in-process diverges:
+
+- **Rate limiting** — a client capped at 10 gets `10 × workers` through, because
+  the OS spreads its connections across independent per-worker buckets.
+  Measured on a 2-worker cluster (30 concurrent requests, burst 10): **20
+  allowed** with the in-memory limiter vs **10 allowed** with the Redis limiter.
+  *Fix (implemented):* set `REDIS_URL` and the limiter runs an **atomic Lua
+  token bucket** in Redis — refill, consume, and TTL eviction in one script, so
+  there's no read-modify-write race between workers. One global budget.
+- **Circuit breaker / health** — left **per-worker on purpose**. Each worker
+  independently learning a backend is bad is acceptable (and converges quickly);
+  coordinating it would add cost for little benefit. A reasonable trade-off to be
+  able to defend, not an oversight.
+- **Metrics** — each worker has partial counts. The primary gathers every
+  worker's metrics over IPC and merges them (`AggregatorRegistry.aggregate`,
+  which sums same-named series) into one endpoint, instead of N fragmented views.
+
+**Fail-open vs fail-closed.** On a Redis error the rate limiter fails *open*
+(allows the request). For rate limiting, keeping real traffic flowing usually
+beats strict enforcement during a Redis blip; a security-critical limiter might
+choose to fail closed. It's a config flag.
+
+### 7.2 Horizontal (next)
+
+Multiple hosts behind a Layer-4 balancer (or DNS). The same Redis gives a global
+rate-limit budget across hosts, not just across local workers. Health and config
+then need a shared source of truth — a control plane pushing config or a
+service-discovery backend (Consul/etcd) instead of a static `routes.json`.
+
+### 7.3 Config (next)
+
+Config is static at boot + mutable via the admin API, but changes aren't
+persisted. Next step is hot-reload from a watched file or a config service, with
+schema validation on load (the Envoy xDS pattern).
 
 ## 8. Security posture
 
@@ -150,6 +175,7 @@ This balancer is a single Node process. To scale:
   retry mid-stream body uploads is intentionally not done.
 - Half-open breaker state allows multiple concurrent trial requests rather than
   strictly one.
-- Single-process state model (see §7).
+- Circuit-breaker and health state are per-worker in cluster mode (deliberate;
+  see §7.1), so each worker learns backend health independently.
 - Benchmarks are single-host loopback (no network), so they measure CPU/proxy
   overhead, not real-network latency.

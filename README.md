@@ -13,6 +13,7 @@ A high-performance HTTP load balancer written in Node.js with health checking, m
 - [Configuration](#configuration)
 - [Monitoring & Metrics](#monitoring--metrics)
 - [Admin API](#admin-api)
+- [Running at Scale](#running-at-scale)
 - [Testing](#testing)
 - [Performance](#performance)
 - [Project Structure](#project-structure)
@@ -35,6 +36,12 @@ A high-performance HTTP load balancer written in Node.js with health checking, m
 - Automatic failover/retry across backends for idempotent requests
 - Upstream timeouts so a hung backend fails over instead of hanging the client
 - Graceful shutdown (drains in-flight requests)
+
+### Scale
+- Multi-core via Node `cluster` (one worker per CPU, shared listen socket)
+- Distributed rate limiting backed by Redis (atomic Lua token bucket) so the
+  budget is enforced globally across workers/instances
+- Aggregated Prometheus metrics across cluster workers
 
 ### Monitoring & Observability
 - Prometheus metrics endpoint (`/metrics`)
@@ -158,6 +165,8 @@ npm run mock
 
 # 2. In another terminal, start the load balancer (port 8080)
 npm start
+# ...or run multi-core: one worker per CPU
+npm run start:cluster
 
 # 3. Send a request
 curl http://localhost:8080/users
@@ -215,6 +224,9 @@ A backend entry may be a plain URL string, or an object with a `weight`
 - `HEALTH_INTERVAL_MS` — active health-check interval (default `5000`)
 - `PROXY_TIMEOUT_MS` — upstream request timeout (default `30000`)
 - `LOG_LEVEL` — `silent` | `error` | `info` (default `info`)
+- `REDIS_URL` — if set, rate limiting uses Redis (shared across workers); otherwise in-memory
+- `WORKERS` — cluster worker count (default: CPU count; only used by `start:cluster`)
+- `METRICS_PORT` — aggregated metrics port in cluster mode (default `9100`)
 
 ## Monitoring & Metrics
 
@@ -319,6 +331,41 @@ Content-Type: application/json
 }
 ```
 
+## Running at Scale
+
+A single Node process uses one core. For multi-core, run the cluster entry — it
+forks one worker per CPU behind a shared listen socket, restarts dead workers,
+and the primary serves **aggregated** Prometheus metrics (summed across workers)
+on `METRICS_PORT`:
+
+```bash
+npm run start:cluster          # WORKERS defaults to CPU count
+WORKERS=4 npm run start:cluster
+```
+
+**The catch — shared state.** Each worker has its own memory, so the in-memory
+rate limiter diverges: a client capped at 10 can get `10 × workers` through
+because the OS spreads its connections across workers. Demonstrated on a 2-worker
+cluster, 30 concurrent requests from one IP (burst = 10):
+
+| Limiter | Allowed | Why |
+|---------|--------:|-----|
+| in-memory (per worker) | 20 | two independent 10-token buckets |
+| Redis (shared) | 10 | one global bucket, atomic Lua refill+consume |
+
+Enable the shared limiter by pointing every instance at one Redis:
+
+```bash
+docker-compose up -d redis
+REDIS_URL=redis://localhost:6379 npm run start:cluster
+```
+
+The token bucket runs as a single atomic Lua script (refill + consume + TTL
+eviction) so there's no read-modify-write race between workers. On a Redis error
+the limiter **fails open** (allows traffic) — availability over strict
+enforcement during a blip; see [DESIGN.md](DESIGN.md) §7 for the trade-offs and
+the path to horizontal scale.
+
 ## Testing
 
 Tests use Node's built-in test runner (no extra test framework):
@@ -329,10 +376,11 @@ npm test
 
 Coverage includes unit tests (Trie longest-prefix matching, all balancing
 strategies, weighted distribution, circuit-breaker state transitions, rate-limit
-refill/eviction, EWMA latency) and integration tests that boot the server on
-ephemeral ports and exercise routing, round-robin distribution, failover past a
-dead backend, idempotent-vs-non-idempotent retry behaviour, 404 handling, and
-admin token auth.
+refill/eviction, EWMA latency, and the Redis limiter's shared-budget behaviour
+across workers) and integration tests that boot the server on ephemeral ports
+and exercise routing, round-robin distribution, failover past a dead backend,
+idempotent-vs-non-idempotent retry behaviour, 404 handling, and admin token
+auth.
 
 ## Performance
 
@@ -372,14 +420,16 @@ load-balancer/
 │   │   ├── trie.js             # Path-prefix Trie for route matching
 │   │   └── metrics.js          # Prometheus metrics
 │   ├── middleware/
-│   │   └── rateLimit.js        # Token-bucket rate limiter
+│   │   ├── rateLimit.js        # In-memory token-bucket rate limiter
+│   │   └── redisRateLimiter.js # Distributed (Redis/Lua) rate limiter
 │   ├── controller/
 │   │   └── admin.js            # Admin API handlers
 │   ├── logger/
 │   │   └── logger.js           # Structured JSON logging (level-gated)
 │   ├── utils/
 │   │   └── utils.js            # HTTP helpers
-│   └── server.js               # Entry point (data + control plane)
+│   ├── server.js               # Single-process entry (data + control plane)
+│   └── cluster.js              # Multi-core entry (forks workers, aggregates metrics)
 ├── tests/                      # Unit + integration tests (node:test)
 ├── bench/
 │   └── bench.js                # autocannon load benchmark
@@ -438,4 +488,4 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 - [ ] WebSocket proxying
 - [ ] Configuration hot-reload
 - [ ] Configuration validation
-- [ ] Multi-core (cluster) with shared rate-limit state
+- [ ] Tail-latency mitigation (power-of-two-choices, hedged requests)
