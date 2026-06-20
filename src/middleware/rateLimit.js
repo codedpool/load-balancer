@@ -63,11 +63,18 @@ export class RateLimiter {
 
 // Wraps a request handler, rejecting clients that exceed their token budget.
 // Keyed on the client IP so the budget is shared across that client's
-// connections (not reset per ephemeral source port).
+// connections (not reset per ephemeral source port). `allow` may be sync (the
+// in-memory limiter) or async (the Redis-backed limiter); awaiting handles both.
 export function rateLimitMiddleware(rl, next) {
-  return (req, res) => {
+  return async (req, res) => {
     const key = req.socket.remoteAddress ?? '';
-    if (!rl.allow(key)) {
+    let allowed = true;
+    try {
+      allowed = await rl.allow(key);
+    } catch {
+      allowed = true; // fail open if the limiter backend errors
+    }
+    if (!allowed) {
       res.writeHead(429, { 'Content-Type': 'text/plain' });
       res.end('Too Many Requests\n');
       return;
