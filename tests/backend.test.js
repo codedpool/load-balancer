@@ -5,8 +5,30 @@ import { Backend, BackendPool, Strategy, parseStrategy } from '../src/core/backe
 test('parseStrategy normalizes names and defaults to round robin', () => {
   assert.equal(parseStrategy('WEIGHTED_ROUND_ROBIN'), Strategy.WeightedRoundRobin);
   assert.equal(parseStrategy('least_connections'), Strategy.LeastConnections);
+  assert.equal(parseStrategy('p2c'), Strategy.PowerOfTwoChoices);
+  assert.equal(parseStrategy('power_of_two_choices'), Strategy.PowerOfTwoChoices);
   assert.equal(parseStrategy('nonsense'), Strategy.RoundRobin);
   assert.equal(parseStrategy(undefined), Strategy.RoundRobin);
+});
+
+test('p2c picks the less loaded of its sampled pair', () => {
+  // With two backends, p2c samples both and must return the lighter one.
+  const pool = BackendPool.fromSpecs(['http://a:1', 'http://b:1']);
+  pool.strategy = Strategy.PowerOfTwoChoices;
+  pool.backends[0].active = 5;
+  pool.backends[1].active = 0;
+  for (let i = 0; i < 10; i++) {
+    assert.equal(pool.getNextBackend('x').host, 'b:1');
+  }
+});
+
+test('p2c never returns an unavailable backend', () => {
+  const pool = BackendPool.fromSpecs(['http://a:1', 'http://b:1', 'http://c:1']);
+  pool.strategy = Strategy.PowerOfTwoChoices;
+  pool.backends[0].setAlive(false);
+  for (let i = 0; i < 20; i++) {
+    assert.notEqual(pool.getNextBackend('x').host, 'a:1');
+  }
 });
 
 test('round robin cycles through backends', () => {
