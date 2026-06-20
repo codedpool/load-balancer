@@ -6,7 +6,9 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "mock": "node mock_servers/start.js"
+    "mock": "node mock_servers/start.js",
+    "test": "node --test",
+    "bench": "node bench/bench.js"
   },
   "engines": {
     "node": ">=18"
@@ -20,5 +22,8 @@
   "dependencies": {
     "http-proxy": "^1.18.1",
     "prom-client": "^15.1.3"
+  },
+  "devDependencies": {
+    "autocannon": "^8.0.0"
   }
 }
