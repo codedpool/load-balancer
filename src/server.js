@@ -6,6 +6,8 @@ import { dirname, join } from 'node:path';
 import { LoadBalancer, parseStrategy } from './core/loadbalancer.js';
 import { initMetrics, register } from './core/metrics.js';
 import { RateLimiter, rateLimitMiddleware } from './middleware/rateLimit.js';
+import { AdaptiveLimiter } from './core/adaptiveLimiter.js';
+import { loadShedMiddleware } from './middleware/loadShed.js';
 import { AdminHandler } from './controller/admin.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -48,7 +50,16 @@ export async function start(opts = {}) {
   }
 
   // ---- Data plane (proxying + metrics) ----
-  const proxied = rateLimitMiddleware(rl, (req, res) => lb.handle(req, res));
+  // Optional load shedding: adaptive concurrency limit in front of the balancer.
+  let limiter = null;
+  let handler = (req, res) => lb.handle(req, res);
+  const adaptiveConcurrency = opts.adaptiveConcurrency ?? process.env.ADAPTIVE_CONCURRENCY === 'true';
+  if (adaptiveConcurrency) {
+    limiter = new AdaptiveLimiter(opts.concurrency || {});
+    handler = loadShedMiddleware(limiter, handler);
+  }
+  // Rate limit (per-client) is outermost, then load shed (global admission).
+  const proxied = rateLimitMiddleware(rl, handler);
   const dataServer = http.createServer((req, res) => {
     const path = req.url.split('?')[0];
     if (serveMetricsEndpoint && path === '/metrics') {
@@ -97,6 +108,7 @@ export async function start(opts = {}) {
     adminServer,
     lb,
     rl,
+    limiter,
     stop,
     ports: { data: dataServer.address().port, admin: adminServer.address().port },
   };
