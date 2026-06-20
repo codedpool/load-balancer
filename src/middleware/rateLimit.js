@@ -1,11 +1,20 @@
-// Per-client token-bucket rate limiter.
+// Per-client token-bucket rate limiter with idle-entry eviction so the bucket
+// maps don't grow unbounded with the number of distinct clients seen.
 
 export class RateLimiter {
-  constructor(rate, burst) {
+  constructor(rate, burst, { idleTtlMs = 600000, cleanupIntervalMs = 60000 } = {}) {
     this.rate = rate; // tokens added per second
     this.burst = burst; // maximum bucket size
     this.tokens = new Map();
     this.lastRefill = new Map();
+
+    this.idleTtlMs = idleTtlMs;
+    this.cleanupTimer = null;
+    if (cleanupIntervalMs > 0) {
+      this.cleanupTimer = setInterval(() => this.sweep(), cleanupIntervalMs);
+      // Don't keep the process alive just for cleanup.
+      this.cleanupTimer.unref?.();
+    }
   }
 
   allow(key) {
@@ -27,6 +36,28 @@ export class RateLimiter {
       return true;
     }
     return false;
+  }
+
+  // Drop buckets for clients that haven't been seen within the idle TTL.
+  sweep() {
+    const cutoff = Date.now() / 1000 - this.idleTtlMs / 1000;
+    for (const [key, last] of this.lastRefill) {
+      if (last < cutoff) {
+        this.lastRefill.delete(key);
+        this.tokens.delete(key);
+      }
+    }
+  }
+
+  size() {
+    return this.lastRefill.size;
+  }
+
+  stop() {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
   }
 }
 
