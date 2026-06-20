@@ -1,0 +1,22 @@
+{
+  "routes": [
+    {
+      "prefix": "/users",
+      "backends": [
+        "http://user1:8081",
+        "http://user2:8082",
+        "http://user3:8083"
+      ],
+      "strategy": "p2c"
+    },
+    {
+      "prefix": "/posts",
+      "backends": [
+        "http://post1:8091",
+        "http://post2:8092"
+      ],
+      "strategy": "least_latency",
+      "hedgeDelayMs": 30
+    }
+  ]
+}

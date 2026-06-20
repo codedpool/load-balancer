@@ -1,6 +1,48 @@
+# One-command full stack:  docker-compose up --build
+#
+#   lb            -> load balancer (data :8080, admin :8090)
+#   user1..post2  -> mock backend services
+#   redis         -> shared store for distributed rate limiting
+#   prometheus    -> scrapes lb:8080/metrics  (http://localhost:9090)
+#   grafana       -> dashboards               (http://localhost:3000, admin/admin)
+#
+# Try it:  curl localhost:8080/users   then watch Grafana.
 version: '3.8'
 
 services:
+  lb:
+    build: .
+    ports:
+      - "8080:8080"
+      - "8090:8090"
+    environment:
+      - ROUTES_PATH=/app/routes.docker.json
+      - REDIS_URL=redis://redis:6379
+      - ADMIN_TOKEN=demo-token
+      - ADAPTIVE_CONCURRENCY=true
+    depends_on: [user1, user2, user3, post1, post2, redis]
+
+  user1:
+    build: .
+    command: node mock_servers/backend_user1.js
+  user2:
+    build: .
+    command: node mock_servers/backend_user2.js
+  user3:
+    build: .
+    command: node mock_servers/backend_user3.js
+  post1:
+    build: .
+    command: node mock_servers/backend_post1.js
+  post2:
+    build: .
+    command: node mock_servers/backend_post2.js
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
   prometheus:
     image: prom/prometheus:latest
     ports:
@@ -11,6 +53,7 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--web.enable-lifecycle'
+    depends_on: [lb]
 
   grafana:
     image: grafana/grafana:latest
@@ -20,13 +63,7 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
       - grafana-storage:/var/lib/grafana
-
-  # Shared store for distributed rate limiting across cluster workers/instances.
-  # Run: docker-compose up -d redis  then  REDIS_URL=redis://localhost:6379 npm run start:cluster
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    depends_on: [prometheus]
 
 volumes:
   grafana-storage:

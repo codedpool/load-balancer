@@ -3,7 +3,9 @@ global:
 
 scrape_configs:
   - job_name: 'load-balancer'
+    # 'lb' is the load balancer service in docker-compose. If you instead run the
+    # balancer on the host, change this to 'host.docker.internal:8080'.
     static_configs:
-      - targets: ['host.docker.internal:8080']
+      - targets: ['lb:8080']
     scrape_interval: 5s
     metrics_path: /metrics

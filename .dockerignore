@@ -1,0 +1,10 @@
+node_modules
+.git
+tests
+bench
+assets
+*.md
+.github
+docker-compose.yml
+prometheus.yml
+load-balancer-dashboard.json
