@@ -21,5 +21,12 @@ services:
     volumes:
       - grafana-storage:/var/lib/grafana
 
+  # Shared store for distributed rate limiting across cluster workers/instances.
+  # Run: docker-compose up -d redis  then  REDIS_URL=redis://localhost:6379 npm run start:cluster
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
 volumes:
   grafana-storage:
