@@ -4,6 +4,7 @@ import { performance } from 'node:perf_hooks';
 
 import { Trie } from './trie.js';
 import { Backend, BackendPool, Strategy, parseStrategy, specToBackend } from './backend.js';
+import { RetryBudget } from '../middleware/retryBudget.js';
 import * as logger from '../logger/logger.js';
 import {
   RouteRequestsTotal,
@@ -24,6 +25,8 @@ import {
   BackendHealthCheckDuration,
   BackendHealthCheckFailures,
   BackendLoadScore,
+  RetriesTotal,
+  RetriesExhausted,
 } from './metrics.js';
 
 // Methods safe to retry on another backend without risking duplicate side
@@ -55,6 +58,8 @@ export class LoadBalancer {
     // the connection level.
     this.maxRetries = opts.maxRetries ?? 2;
     this.breakerOptions = opts.breakerOptions;
+    // Globally bounds retry volume so failures can't amplify into a storm.
+    this.retryBudget = new RetryBudget(opts.retryBudget || {});
     this.healthTimer = null;
     // Pooled keep-alive connections to upstreams. Without this, every proxied
     // request opens (and closes) a fresh TCP socket, which collapses throughput
@@ -105,6 +110,7 @@ export class LoadBalancer {
     }
 
     RouteActiveRequests.labels(prefix).inc();
+    this.retryBudget.deposit();
 
     const contentLength = Number(req.headers['content-length'] || 0);
     if (contentLength > 0) {
@@ -210,8 +216,14 @@ export class LoadBalancer {
         });
 
         if (!res.headersSent && idempotent && tried.size < maxAttempts) {
-          attempt(); // fail over to the next backend
-          return;
+          // Only retry if the global retry budget allows it — this is what
+          // stops a wave of failures from amplifying into a retry storm.
+          if (this.retryBudget.withdraw()) {
+            RetriesTotal.labels(prefix).inc();
+            attempt(); // fail over to the next backend
+            return;
+          }
+          RetriesExhausted.labels(prefix).inc();
         }
         RouteErrorsTotal.labels(prefix, 'proxy_error').inc();
         if (!res.headersSent) {

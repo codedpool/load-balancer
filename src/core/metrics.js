@@ -66,6 +66,35 @@ export const RouteHedgeWins = new client.Counter({
   labelNames: ['route'],
 });
 
+// ===== CASCADING-FAILURE PREVENTION =====
+
+export const RetriesTotal = new client.Counter({
+  name: 'lb_retries_total',
+  help: 'Total number of retry attempts (failover to another backend)',
+  labelNames: ['route'],
+});
+
+export const RetriesExhausted = new client.Counter({
+  name: 'lb_retries_exhausted_total',
+  help: 'Retries denied because the retry budget was exhausted',
+  labelNames: ['route'],
+});
+
+export const ConcurrencyLimit = new client.Gauge({
+  name: 'lb_concurrency_limit',
+  help: 'Current adaptive concurrency limit (max in-flight before shedding)',
+});
+
+export const InflightRequests = new client.Gauge({
+  name: 'lb_inflight_requests',
+  help: 'Current number of in-flight requests counted against the concurrency limit',
+});
+
+export const ShedTotal = new client.Counter({
+  name: 'lb_shed_requests_total',
+  help: 'Total number of requests shed (503) due to the concurrency limit',
+});
+
 // ===== BACKEND-LEVEL METRICS =====
 
 export const BackendHealthStatus = new client.Gauge({
