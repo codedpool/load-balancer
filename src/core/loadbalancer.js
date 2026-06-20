@@ -1,4 +1,5 @@
 import httpProxy from 'http-proxy';
+import http from 'node:http';
 import { performance } from 'node:perf_hooks';
 
 import { Trie } from './trie.js';
@@ -23,22 +24,58 @@ import {
   BackendLoadScore,
 } from './metrics.js';
 
+// Methods safe to retry on another backend without risking duplicate side
+// effects. Non-idempotent requests (POST/PATCH) are never retried.
+const IDEMPOTENT = new Set(['GET', 'HEAD', 'PUT', 'DELETE', 'OPTIONS']);
+
+function classifyError(err) {
+  switch (err?.code) {
+    case 'ECONNREFUSED':
+      return 'connection_refused';
+    case 'ECONNRESET':
+      return 'connection_reset';
+    case 'ETIMEDOUT':
+    case 'ESOCKETTIMEDOUT':
+      return 'timeout';
+    default:
+      return 'connection_error';
+  }
+}
+
 export class LoadBalancer {
-  constructor() {
+  constructor(opts = {}) {
     this.routes = new Map(); // prefix -> BackendPool
     this.trie = new Trie();
+    // Extra attempts (on top of the first) when an idempotent request fails at
+    // the connection level.
+    this.maxRetries = opts.maxRetries ?? 2;
+    this.breakerOptions = opts.breakerOptions;
+    this.healthTimer = null;
+    // Pooled keep-alive connections to upstreams. Without this, every proxied
+    // request opens (and closes) a fresh TCP socket, which collapses throughput
+    // and exhausts ephemeral ports under load.
+    this.agent = new http.Agent({
+      keepAlive: true,
+      maxSockets: opts.maxSockets ?? 256,
+      maxFreeSockets: 256,
+    });
     // A single shared proxy; the upstream is chosen per request via `target`.
-    this.proxy = httpProxy.createProxyServer({ xfwd: true });
+    // proxyTimeout bounds how long we wait on the upstream before failing over.
+    this.proxy = httpProxy.createProxyServer({
+      xfwd: true,
+      proxyTimeout: opts.proxyTimeoutMs ?? 30000,
+      agent: this.agent,
+    });
   }
 
   addRoute(prefix, backends, strategy) {
-    const pool = BackendPool.fromSpecs(backends);
+    const pool = BackendPool.fromSpecs(backends, this.breakerOptions);
     pool.strategy = strategy;
     this.routes.set(prefix, pool);
     this.trie.insert(prefix);
   }
 
-  // Core request entry point (equivalent to the original ServeHTTP).
+  // Core request entry point with retry/failover across backends.
   handle(req, res) {
     const start = performance.now();
     const requestId = logger.newRequestId();
@@ -53,7 +90,6 @@ export class LoadBalancer {
     }
 
     const pool = this.routes.get(prefix);
-
     RouteActiveRequests.labels(prefix).inc();
 
     const contentLength = Number(req.headers['content-length'] || 0);
@@ -62,88 +98,118 @@ export class LoadBalancer {
     }
 
     const clientIP = req.socket.remoteAddress ?? '';
-    const target = pool.getNextBackend(clientIP);
-    if (!target) {
-      RouteErrorsTotal.labels(prefix, 'no_backend_available').inc();
-      logger.error(requestId, 'No backend available', {
-        method: req.method,
-        path,
-      });
-      RouteActiveRequests.labels(prefix).dec();
-      res.writeHead(503, { 'Content-Type': 'text/plain' });
-      res.end('No Backend available\n');
-      return;
-    }
+    const capture = wrapResponse(res);
+    const idempotent = IDEMPOTENT.has(req.method);
+    const maxAttempts = idempotent ? this.maxRetries + 1 : 1;
+    const tried = new Set();
 
-    target.incActive();
-    BackendActiveConnections.labels(prefix, target.target, target.host).inc();
-    BackendSelectionTotal.labels(prefix, target.target, target.host, pool.strategy).inc();
+    let chosen = null;
+    let chosenStart = 0;
+    let attemptActiveDec = true; // true => no active attempt to decrement
+    let routeFinalized = false;
 
-    // Capture status code and response size the same way the original wrapped
-    // the ResponseWriter.
-    const captured = wrapResponse(res);
+    const decChosenActive = () => {
+      if (attemptActiveDec) return;
+      attemptActiveDec = true;
+      BackendActiveConnections.labels(prefix, chosen.target, chosen.host).dec();
+      chosen.decActive();
+    };
 
-    let settled = false;
-    const finalize = () => {
-      if (settled) return;
-      settled = true;
-
-      const duration = performance.now() - start; // ms
-      target.recordRequest(duration);
-
-      const statusCode = captured.statusCode;
-      const responseSize = captured.responseSize;
-
-      this.updateBackendMetrics(prefix, target, duration, statusCode);
+    const finalizeRoute = () => {
+      if (routeFinalized) return;
+      routeFinalized = true;
+      const statusCode = capture.statusCode;
+      const duration = performance.now() - start;
 
       RouteRequestsTotal.labels(prefix, req.method, String(statusCode)).inc();
       RouteRequestDuration.labels(prefix, req.method).observe(duration / 1000);
-
-      if (responseSize > 0) {
-        RouteResponseSize.labels(prefix).observe(responseSize);
+      if (capture.responseSize > 0) {
+        RouteResponseSize.labels(prefix).observe(capture.responseSize);
       }
-
       if (statusCode >= 400) {
         const errorType = statusCode >= 500 ? 'server_error' : 'client_error';
         RouteErrorsTotal.labels(prefix, errorType).inc();
       }
+      RouteActiveRequests.labels(prefix).dec();
 
       logger.info(requestId, 'Routing request', {
         method: req.method,
         path,
-        target: target.target,
+        target: chosen ? chosen.target : '-',
         duration: `${duration.toFixed(3)}ms`,
       });
-      console.log(
-        `[${req.method}] ${path} -> ${target.target} [strategy=${pool.strategy}] in ${duration.toFixed(2)}ms ` +
-          `(avg ${target.avgLatency().toFixed(2)} ms, active ${target.activeRequests()})`
-      );
-
-      BackendActiveConnections.labels(prefix, target.target, target.host).dec();
-      target.decActive();
-      RouteActiveRequests.labels(prefix).dec();
     };
 
-    res.on('finish', finalize);
-    res.on('close', finalize);
-
-    this.proxy.web(req, res, { target: target.target }, (err) => {
-      // Upstream connection failure / proxy error.
-      BackendFailuresTotal.labels(prefix, target.target, target.host, 'connection_error').inc();
-      RouteErrorsTotal.labels(prefix, 'proxy_error').inc();
-      logger.error(requestId, 'Proxy error', {
-        method: req.method,
-        path,
-        target: target.target,
-        status: err?.code || 'error',
-      });
-      if (!res.headersSent) {
-        res.writeHead(502, { 'Content-Type': 'text/plain' });
+    // Success path: the upstream response was fully relayed to the client.
+    res.on('finish', () => {
+      if (chosen && !attemptActiveDec) {
+        const duration = performance.now() - chosenStart;
+        chosen.recordRequest(duration);
+        const statusCode = capture.statusCode;
+        // A 5xx counts as a failure for passive ejection; otherwise success.
+        if (statusCode >= 500) {
+          chosen.recordFailure();
+        } else {
+          chosen.recordSuccess();
+        }
+        this.updateBackendMetrics(prefix, chosen, duration, statusCode);
+        decChosenActive();
       }
-      if (!res.writableEnded) {
-        res.end('Bad Gateway\n');
-      }
+      finalizeRoute();
     });
+    res.on('close', () => {
+      decChosenActive();
+      finalizeRoute();
+    });
+
+    const attempt = () => {
+      const target = pool.getNextBackend(clientIP, tried);
+      if (!target) {
+        RouteErrorsTotal.labels(prefix, tried.size === 0 ? 'no_backend_available' : 'all_backends_failed').inc();
+        if (!res.headersSent) {
+          res.writeHead(503, { 'Content-Type': 'text/plain' });
+          res.end('No backend available\n');
+        } else if (!res.writableEnded) {
+          res.end();
+        }
+        return;
+      }
+
+      tried.add(target);
+      chosen = target;
+      chosenStart = performance.now();
+      attemptActiveDec = false;
+      target.incActive();
+      BackendActiveConnections.labels(prefix, target.target, target.host).inc();
+      BackendSelectionTotal.labels(prefix, target.target, target.host, pool.strategy).inc();
+
+      this.proxy.web(req, res, { target: target.target }, (err) => {
+        // This attempt failed at the connection level.
+        decChosenActive();
+        target.recordFailure();
+        BackendFailuresTotal.labels(prefix, target.target, target.host, classifyError(err)).inc();
+        logger.error(requestId, 'Proxy error', {
+          method: req.method,
+          path,
+          target: target.target,
+          status: err?.code || 'error',
+        });
+
+        if (!res.headersSent && idempotent && tried.size < maxAttempts) {
+          attempt(); // fail over to the next backend
+          return;
+        }
+        RouteErrorsTotal.labels(prefix, 'proxy_error').inc();
+        if (!res.headersSent) {
+          res.writeHead(502, { 'Content-Type': 'text/plain' });
+          res.end('Bad Gateway\n');
+        } else if (!res.writableEnded) {
+          res.end();
+        }
+      });
+    };
+
+    attempt();
   }
 
   updateBackendMetrics(routePrefix, backend, durationMs, statusCode) {
@@ -181,7 +247,7 @@ export class LoadBalancer {
   }
 
   startHealthChecks(intervalMs, healthPath) {
-    setInterval(() => {
+    this.healthTimer = setInterval(() => {
       const snapshot = [...this.routes.entries()];
       for (const [prefix, pool] of snapshot) {
         for (const b of pool.backends) {
@@ -189,6 +255,8 @@ export class LoadBalancer {
         }
       }
     }, intervalMs);
+    // Health checks alone shouldn't keep the process alive.
+    this.healthTimer.unref?.();
   }
 
   async checkBackend(prefix, backend, healthPath) {
@@ -224,14 +292,14 @@ export class LoadBalancer {
   addBackendToRoute(prefix, backendURL, strategy, weight = 1) {
     const existing = this.routes.get(prefix);
     if (!existing) {
-      const pool = new BackendPool([new Backend(backendURL, weight)], strategy);
+      const pool = new BackendPool([new Backend(backendURL, weight, this.breakerOptions)], strategy);
       this.routes.set(prefix, pool);
       this.trie.insert(prefix);
       console.log(`Created new route ${prefix} with backend ${backendURL}`);
       return;
     }
 
-    existing.backends.push(new Backend(backendURL, weight));
+    existing.backends.push(new Backend(backendURL, weight, this.breakerOptions));
     console.log(`Added new backend ${backendURL} to route ${prefix}`);
   }
 
@@ -252,7 +320,12 @@ export class LoadBalancer {
       result.push({
         prefix,
         strategy: pool.strategy,
-        backends: pool.backends.map((b) => ({ url: b.target, weight: b.weight })),
+        backends: pool.backends.map((b) => ({
+          url: b.target,
+          weight: b.weight,
+          alive: b.isAlive(),
+          breaker: b.breaker.state,
+        })),
       });
     }
     return result;
@@ -265,7 +338,7 @@ export class LoadBalancer {
     }
 
     if (backends && backends.length > 0) {
-      pool.backends = backends.map(specToBackend);
+      pool.backends = backends.map((s) => specToBackend(s, this.breakerOptions));
     }
 
     if (strategy) {
@@ -276,6 +349,20 @@ export class LoadBalancer {
         pool.strategy = newStrategy;
       }
     }
+  }
+
+  // Stop background timers and release proxy sockets (for graceful shutdown).
+  stop() {
+    if (this.healthTimer) {
+      clearInterval(this.healthTimer);
+      this.healthTimer = null;
+    }
+    try {
+      this.proxy.close();
+    } catch {
+      /* no-op */
+    }
+    this.agent.destroy();
   }
 }
 
