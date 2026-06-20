@@ -10,6 +10,7 @@ export const Strategy = Object.freeze({
   LeastActive: 'least_active',
   LeastConnections: 'least_connections',
   LeastLoaded: 'least_loaded',
+  PowerOfTwoChoices: 'p2c',
   IPHash: 'ip_hash',
 });
 
@@ -25,11 +26,19 @@ export function parseStrategy(s) {
       return Strategy.LeastLatency;
     case Strategy.LeastLoaded:
       return Strategy.LeastLoaded;
+    case Strategy.PowerOfTwoChoices:
+    case 'power_of_two_choices':
+      return Strategy.PowerOfTwoChoices;
     case Strategy.IPHash:
       return Strategy.IPHash;
     default:
       return Strategy.RoundRobin;
   }
+}
+
+// Combined load score: active requests plus normalized latency. Lower is better.
+export function loadScore(b) {
+  return b.activeRequests() + b.avgLatency() / 100;
 }
 
 // Smoothing factor for the exponentially weighted moving average of latency.
@@ -127,6 +136,7 @@ export class BackendPool {
     this.backends = backends;
     this.current = 0;
     this.strategy = strategy;
+    this.hedgeDelayMs = 0; // >0 enables hedged requests for this route
   }
 
   static fromSpecs(specs, breakerOptions) {
@@ -185,13 +195,30 @@ export class BackendPool {
         let bestScore = Infinity;
         for (const b of backends) {
           if (!usable(b)) continue;
-          const score = b.activeRequests() + b.avgLatency() / 100;
+          const score = loadScore(b);
           if (score < bestScore) {
             bestScore = score;
             best = b;
           }
         }
         return best;
+      }
+
+      case Strategy.PowerOfTwoChoices: {
+        // Power of two choices: sample two usable backends at random and pick
+        // the less loaded. ~as good as full least-loaded scan, O(1), and far
+        // better than one random pick (Mitzenmacher). Avoids the herd effect of
+        // everyone piling onto whichever backend currently looks best.
+        const pool = [];
+        for (const b of backends) {
+          if (usable(b)) pool.push(b);
+        }
+        if (pool.length === 0) return null;
+        if (pool.length === 1) return pool[0];
+        const i = Math.floor(Math.random() * pool.length);
+        let j = Math.floor(Math.random() * (pool.length - 1));
+        if (j >= i) j += 1; // ensure j != i
+        return loadScore(pool[i]) <= loadScore(pool[j]) ? pool[i] : pool[j];
       }
 
       case Strategy.LeastLatency: {
