@@ -6,254 +6,254 @@
 <title>Load Balancer — signal router</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
 <style>
   :root {
-    --rack: #15171b; --panel: #20242b; --raise: #262b34; --edge: #333a45;
-    --line: #2a2f38; --ink: #ece8df; --muted: #889; --muted2: #6a7079;
-    --signal: #ffae3b; --signal-dim: #6b4f25;
-    --ok: #57d08a; --down: #ff5d52;
-    --pa: #ffae3b; --pb: #57d08a; --pc: #6fb6ff; --pd: #c98bff;
+    --void: #06080f;
+    --ink: #e8ecf6; --muted: #9aa3bd; --muted2: #5a6178;
+    --hair: rgba(255,255,255,.08); --hair2: rgba(255,255,255,.045);
+    --glass: rgba(255,255,255,.035); --glass2: rgba(255,255,255,.06);
+    --cyan: #6ee7ff; --violet: #a78bfa;
+    --ok: #46e5b5; --half: #f5b85a; --down: #fb6e84;
+    --glow-cyan: rgba(110,231,255,.5); --glow-violet: rgba(167,139,250,.45);
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
-    margin: 0; height: 100vh; overflow: hidden;
-    background: var(--rack); color: var(--ink);
-    font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace;
-    -webkit-font-smoothing: antialiased;
-  }
-  .disp { font-family: "Archivo", system-ui, sans-serif; }
-  .lab { font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--muted2); }
-
-  .shell { height: 100vh; padding: 0; display: flex; flex-direction: column; }
-
-  /* device panel — full bleed */
-  .device {
-    flex: 1; min-height: 0; display: flex; flex-direction: column;
+    margin: 0; height: 100vh; overflow: hidden; color: var(--ink);
+    font-family: "Sora", system-ui, sans-serif; -webkit-font-smoothing: antialiased;
     background:
-      linear-gradient(180deg, rgba(255,255,255,.02), rgba(0,0,0,.16)),
-      var(--panel);
-    box-shadow: 0 1px 0 rgba(255,255,255,.04) inset;
-    overflow: hidden;
+      radial-gradient(900px 600px at 12% -8%, rgba(110,231,255,.10), transparent 60%),
+      radial-gradient(1000px 700px at 100% 110%, rgba(167,139,250,.12), transparent 60%),
+      radial-gradient(130% 120% at 50% 30%, #0c1020, #06080f 70%);
+  }
+  .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+  .lab { font: 500 9.5px/1 "JetBrains Mono", monospace; letter-spacing: .24em; text-transform: uppercase; color: var(--muted2); }
+
+  .app { height: 100vh; display: flex; flex-direction: column; animation: rise .6s cubic-bezier(.2,.7,.2,1) both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+  .glass {
+    background: var(--glass);
+    border: 1px solid var(--hair);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 20px 50px -30px rgba(0,0,0,.8);
+    -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
   }
 
-  /* header / faceplate */
-  .face { display: flex; align-items: center; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
-  .mark { display: flex; align-items: baseline; gap: 12px; }
-  .mark .name { font-weight: 800; font-size: 20px; letter-spacing: .04em; }
-  .mark .model { font-size: 11px; color: var(--muted2); letter-spacing: .16em; }
-  .led-power { width: 9px; height: 9px; border-radius: 50%; background: var(--signal-dim); }
-  .led-power.on { background: var(--signal); box-shadow: 0 0 10px 1px var(--signal); }
-  .face .grow { flex: 1; }
-  .ctl { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-  .knob { display: flex; flex-direction: column; gap: 4px; }
+  /* ---- header ---- */
+  .bar { display: flex; align-items: center; gap: 18px; padding: 15px 22px; border: none; border-bottom: 1px solid var(--hair); background: rgba(255,255,255,.02); flex-wrap: wrap; }
+  .brand { display: flex; align-items: baseline; gap: 12px; }
+  .core-dot { width: 11px; height: 11px; border-radius: 50%; align-self: center;
+    background: radial-gradient(circle at 35% 30%, #fff, var(--cyan) 55%, #2aa6c8);
+    box-shadow: 0 0 12px 2px var(--glow-cyan); }
+  .wordmark { font-weight: 800; font-size: 20px; letter-spacing: .01em;
+    background: linear-gradient(100deg, var(--cyan), var(--violet)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  .sub { font: 500 11px "JetBrains Mono", monospace; letter-spacing: .12em; color: var(--muted2); }
+  .grow { flex: 1; }
+  .status { display: flex; align-items: center; gap: 8px; font: 500 12px "JetBrains Mono", monospace; color: var(--muted); }
+  .status .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--muted2); }
+  .status .pulse.on { background: var(--cyan); box-shadow: 0 0 10px 1px var(--glow-cyan); animation: breathe 2.4s ease-in-out infinite; }
+  @keyframes breathe { 50% { box-shadow: 0 0 16px 3px var(--glow-cyan); } }
+  .field { display: flex; flex-direction: column; gap: 5px; }
   select {
-    font: inherit; font-size: 13px; color: var(--ink); background: var(--raise);
-    border: 1px solid var(--edge); border-radius: 8px; padding: 7px 10px; cursor: pointer;
+    font: 500 12.5px "JetBrains Mono", monospace; color: var(--ink); cursor: pointer;
+    background: rgba(255,255,255,.05); border: 1px solid var(--hair); border-radius: 10px; padding: 8px 12px;
+    transition: border-color .15s ease;
   }
-  select:focus-visible, .run:focus-visible, .port:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+  select:hover { border-color: rgba(255,255,255,.2); }
+  select:focus-visible, .run:focus-visible, .port:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
   .run {
-    font-family: "Archivo", sans-serif; font-weight: 800; letter-spacing: .08em;
-    font-size: 14px; padding: 11px 26px; border-radius: 10px; cursor: pointer;
-    border: 1px solid var(--signal); color: #1a1205; background: var(--signal);
-    box-shadow: 0 0 24px -6px var(--signal); transition: transform .06s ease;
+    font-family: "Sora", sans-serif; font-weight: 700; letter-spacing: .02em; font-size: 14px; color: #03131a;
+    padding: 12px 26px; border: none; border-radius: 12px; cursor: pointer;
+    background: linear-gradient(100deg, var(--cyan), var(--violet));
+    box-shadow: 0 0 0 1px rgba(255,255,255,.12) inset, 0 8px 30px -8px var(--glow-cyan);
+    transition: transform .08s ease, box-shadow .2s ease, filter .2s ease;
   }
+  .run:hover { filter: brightness(1.07); box-shadow: 0 0 0 1px rgba(255,255,255,.2) inset, 0 12px 38px -8px var(--glow-cyan); }
   .run:active { transform: translateY(1px); }
-  .run.stop { background: transparent; color: var(--down); border-color: var(--down); box-shadow: none; }
+  .run.stop { background: rgba(251,110,132,.08); color: var(--down); box-shadow: inset 0 0 0 1px rgba(251,110,132,.45); }
 
-  /* readout strip */
-  .strip { display: grid; grid-template-columns: repeat(5, 1fr); border-bottom: 1px solid var(--line); }
-  .gauge { padding: 14px 20px; border-right: 1px solid var(--line); }
-  .gauge:last-child { border-right: none; }
-  .gauge .val { font-size: 30px; font-weight: 600; line-height: 1; margin-top: 8px; font-variant-numeric: tabular-nums; }
-  .gauge .val .un { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 3px; }
-  .gauge.live .val { color: var(--signal); }
+  /* ---- readouts ---- */
+  .readouts { display: grid; grid-template-columns: repeat(5, 1fr); border-bottom: 1px solid var(--hair); }
+  .ro { padding: 16px 24px; border-right: 1px solid var(--hair2); position: relative; }
+  .ro:last-child { border-right: none; }
+  .ro .rv { display: block; margin-top: 11px; font: 500 32px/1 "JetBrains Mono", monospace; letter-spacing: -.02em; }
+  .ro .rv i { font-size: 12px; font-style: normal; color: var(--muted2); margin-left: 5px; letter-spacing: 0; }
+  .ro.live .rv { color: var(--cyan); text-shadow: 0 0 22px var(--glow-cyan); }
+  .ro.live::after { content: ""; position: absolute; left: 24px; bottom: 0; width: 30px; height: 2px; border-radius: 2px 2px 0 0; background: var(--cyan); box-shadow: 0 0 12px var(--cyan); }
 
-  /* body grid */
-  .body { flex: 1; min-height: 0; display: grid; grid-template-columns: 1.6fr 1fr; }
-  .bay { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  /* ---- stage ---- */
+  .stage { flex: 1; min-height: 0; display: grid; grid-template-columns: 1.7fr 1fr; }
+  .bay { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--hair); }
   .graphwrap { position: relative; flex: 1; min-height: 0; }
   canvas#graph { display: block; width: 100%; height: 100%; }
-  .armed {
-    position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: center;
-    padding-bottom: 18px; pointer-events: none;
-    color: var(--muted2); font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
-    transition: opacity .4s ease;
-  }
-  .scope { border-top: 1px solid var(--line); padding: 12px 16px 14px; flex: none; }
-  .scope .lab { margin-bottom: 8px; }
-  canvas#scope { display: block; width: 100%; height: 72px; }
+  .armed { position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 22px; pointer-events: none;
+    font: 500 10.5px "JetBrains Mono", monospace; letter-spacing: .22em; text-transform: uppercase; color: var(--muted2); transition: opacity .5s ease; }
+  .scopebar { flex: none; display: flex; align-items: center; gap: 16px; padding: 12px 22px; border-top: 1px solid var(--hair); }
+  .scopebar .lab { flex: none; }
+  canvas#scope { display: block; width: 100%; height: 46px; flex: 1; }
 
-  /* ports panel */
-  .side { display: flex; flex-direction: column; min-height: 0; }
-  .ports { padding: 10px 12px; flex: none; }
-  .ports .lab { padding: 6px 6px 10px; }
+  /* ---- rail ---- */
+  .rail { display: flex; flex-direction: column; min-height: 0; gap: 14px; padding: 16px; }
+  .panel { border-radius: 16px; display: flex; flex-direction: column; min-height: 0; }
+  .ph { display: flex; align-items: baseline; justify-content: space-between; padding: 15px 16px 12px; }
+  .ph .t { font: 600 11px "JetBrains Mono", monospace; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); }
+  .ph .hint { font: 400 10px "JetBrains Mono", monospace; color: var(--muted2); }
+  .ports { flex: none; }
+  .ports .list { padding: 0 12px 12px; }
   .port {
-    display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px;
-    width: 100%; text-align: left; background: var(--raise); border: 1px solid var(--line);
-    border-radius: 10px; padding: 11px 13px; margin-bottom: 8px; cursor: pointer; color: inherit;
-    font: inherit; transition: border-color .15s ease, opacity .2s ease;
+    display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 13px; width: 100%;
+    text-align: left; color: inherit; font: inherit; cursor: pointer; margin-bottom: 8px;
+    background: rgba(255,255,255,.025); border: 1px solid var(--hair); border-radius: 13px; padding: 12px 14px;
+    transition: transform .14s ease, border-color .14s ease, box-shadow .14s ease, opacity .25s ease;
   }
-  .port:hover { border-color: var(--edge); }
-  .port.dead { opacity: .55; }
-  .port .led { width: 11px; height: 11px; border-radius: 50%; }
-  .led.g { background: var(--ok); box-shadow: 0 0 8px -1px var(--ok); }
-  .led.a { background: var(--signal); box-shadow: 0 0 8px -1px var(--signal); }
-  .led.r { background: var(--down); box-shadow: 0 0 8px -1px var(--down); }
-  .port .pname { font-weight: 600; font-size: 13px; }
-  .port .pmeta { font-size: 11px; color: var(--muted); margin-top: 2px; }
-  .port .pright { text-align: right; }
-  .port .pshare { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .port .pbar { height: 3px; background: var(--line); border-radius: 2px; margin-top: 5px; width: 56px; overflow: hidden; }
-  .port .pbar > i { display: block; height: 100%; }
-  .port .pact { font-size: 10px; color: var(--muted2); letter-spacing: .12em; text-transform: uppercase; margin-top: 6px; }
+  .port:hover { transform: translateY(-1px); border-color: rgba(255,255,255,.2); box-shadow: 0 14px 30px -22px #000; }
+  .port.dead { opacity: .45; }
+  .orb { width: 12px; height: 12px; border-radius: 50%; }
+  .orb.g { background: var(--ok); box-shadow: 0 0 0 4px rgba(70,229,181,.1), 0 0 12px var(--ok); }
+  .orb.a { background: var(--half); box-shadow: 0 0 0 4px rgba(245,184,90,.1), 0 0 12px var(--half); }
+  .orb.r { background: var(--down); box-shadow: 0 0 0 4px rgba(251,110,132,.1), 0 0 12px var(--down); }
+  .pname { font: 600 13px "Sora", sans-serif; }
+  .pmeta { font: 400 11px "JetBrains Mono", monospace; color: var(--muted); margin-top: 3px; }
+  .pright { text-align: right; }
+  .pshare { font: 500 18px "JetBrains Mono", monospace; letter-spacing: -.02em; }
+  .pbar { height: 4px; width: 66px; margin: 6px 0 0 auto; border-radius: 3px; background: rgba(255,255,255,.07); overflow: hidden; }
+  .pbar > i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--cyan), var(--violet)); transition: width .5s ease; }
+  .pstate { font: 500 9px "JetBrains Mono", monospace; letter-spacing: .16em; text-transform: uppercase; color: var(--muted2); margin-top: 6px; }
 
-  .console { border-top: 1px solid var(--line); padding: 12px 14px; flex: 1; display: flex; flex-direction: column; min-height: 0; }
-  .console .lab { margin-bottom: 8px; }
-  .feed { font-size: 12px; line-height: 1.7; overflow-y: auto; flex: 1; min-height: 0; }
-  .feed .row { display: flex; gap: 10px; }
-  .feed .ts { color: var(--muted2); }
-  .feed .m.good { color: var(--ok); } .feed .m.bad { color: var(--down); } .feed .m.info { color: var(--ink); }
+  .console { flex: 1; min-height: 0; }
+  .feed { flex: 1; min-height: 0; overflow-y: auto; padding: 0 16px 14px; font: 400 12px/1.8 "JetBrains Mono", monospace;
+    scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.16) transparent; }
+  .feed::-webkit-scrollbar { width: 8px; }
+  .feed::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 8px; }
+  .feed .row { display: flex; gap: 11px; }
+  .feed .ts { color: var(--muted2); flex: none; }
+  .feed .m.good { color: var(--ok); } .feed .m.bad { color: var(--down); } .feed .m.info { color: var(--muted); }
   .feed .empty { color: var(--muted2); }
 
-  @media (max-width: 860px) {
+  @media (max-width: 880px) {
     html, body { height: auto; overflow: auto; }
-    .shell { height: auto; }
-    .device { min-height: 100vh; }
-    .body { grid-template-columns: 1fr; }
-    .bay { border-right: none; border-bottom: 1px solid var(--line); }
-    .graphwrap { height: 300px; flex: none; }
-    .strip { grid-template-columns: repeat(2, 1fr); }
-    .gauge:nth-child(odd) { border-right: 1px solid var(--line); }
+    .app { height: auto; min-height: 100vh; }
+    .stage { grid-template-columns: 1fr; }
+    .bay { border-right: none; border-bottom: 1px solid var(--hair); }
+    .graphwrap { height: 320px; flex: none; }
+    .readouts { grid-template-columns: repeat(2, 1fr); }
+    .ro:nth-child(odd) { border-right: 1px solid var(--hair2); }
   }
-  @media (prefers-reduced-motion: reduce) { .led-power.on, .led.g, .led.a, .led.r { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .status .pulse.on { animation: none; } .app { animation: none; } }
 </style>
 </head>
 <body>
-<div class="shell">
-  <div class="device">
-
-    <div class="face">
-      <span class="led-power" id="power"></span>
-      <div class="mark">
-        <span class="name disp">LOAD&nbsp;BALANCER</span>
-        <span class="model">L7&nbsp;·&nbsp;NODE&nbsp;·&nbsp;REV&nbsp;1</span>
-      </div>
-      <div class="grow"></div>
-      <div class="ctl">
-        <div class="knob">
-          <label class="lab" for="strategy">routing</label>
-          <select id="strategy" title="Switch the balancing strategy live">
-            <option value="round_robin">round robin</option>
-            <option value="weighted_round_robin">weighted round robin</option>
-            <option value="least_latency">least latency</option>
-            <option value="least_active">least active</option>
-            <option value="least_loaded">least loaded</option>
-            <option value="p2c">power of two</option>
-            <option value="ip_hash">ip hash</option>
-          </select>
-        </div>
-        <button type="button" class="run" id="run">▶ RUN TEST</button>
-      </div>
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <span class="core-dot" id="core"></span>
+      <span class="wordmark">LOAD BALANCER</span>
+      <span class="sub">l7 signal router</span>
     </div>
+    <div class="grow"></div>
+    <div class="status"><span class="pulse" id="pulse"></span><span id="statusText">idle</span></div>
+    <label class="field"><span class="lab">routing</span>
+      <select id="strategy" title="Switch the balancing strategy live">
+        <option value="round_robin">round robin</option>
+        <option value="weighted_round_robin">weighted round robin</option>
+        <option value="least_latency">least latency</option>
+        <option value="least_active">least active</option>
+        <option value="least_loaded">least loaded</option>
+        <option value="p2c">power of two</option>
+        <option value="ip_hash">ip hash</option>
+      </select>
+    </label>
+    <button type="button" class="run" id="run">Run test</button>
+  </header>
 
-    <div class="strip">
-      <div class="gauge live"><div class="lab">throughput</div><div class="val" id="rps">0<span class="un">req/s</span></div></div>
-      <div class="gauge"><div class="lab">latency p50</div><div class="val" id="p50">0<span class="un">ms</span></div></div>
-      <div class="gauge"><div class="lab">latency p99</div><div class="val" id="p99">0<span class="un">ms</span></div></div>
-      <div class="gauge"><div class="lab">success</div><div class="val" id="success">100<span class="un">%</span></div></div>
-      <div class="gauge"><div class="lab">requests</div><div class="val" id="total">0</div></div>
-    </div>
+  <section class="readouts">
+    <div class="ro live"><span class="lab">throughput</span><span class="rv mono" id="rps">0<i>req/s</i></span></div>
+    <div class="ro"><span class="lab">latency p50</span><span class="rv mono" id="p50">0<i>ms</i></span></div>
+    <div class="ro"><span class="lab">latency p99</span><span class="rv mono" id="p99">0<i>ms</i></span></div>
+    <div class="ro"><span class="lab">success</span><span class="rv mono" id="success">100<i>%</i></span></div>
+    <div class="ro"><span class="lab">requests</span><span class="rv mono" id="total">0</span></div>
+  </section>
 
-    <div class="body">
-      <div class="bay">
-        <div class="graphwrap">
-          <canvas id="graph"></canvas>
-          <div class="armed" id="armed">press run to send traffic through the router</div>
-        </div>
-        <div class="scope">
-          <div class="lab">throughput trace</div>
-          <canvas id="scope"></canvas>
-        </div>
+  <main class="stage">
+    <div class="bay">
+      <div class="graphwrap">
+        <canvas id="graph"></canvas>
+        <div class="armed" id="armed">press run to send traffic through the router</div>
       </div>
-
-      <div class="side">
-        <div class="ports">
-          <div class="lab">backend ports — click to pull a cable</div>
-          <div id="ports"></div>
-        </div>
-        <div class="console">
-          <div class="lab">console</div>
-          <div class="feed" id="feed"><div class="empty">awaiting activity…</div></div>
-        </div>
-      </div>
+      <div class="scopebar"><span class="lab">throughput</span><canvas id="scope"></canvas></div>
     </div>
-
-  </div>
+    <aside class="rail">
+      <div class="panel glass ports">
+        <div class="ph"><span class="t">Backend ports</span><span class="hint">click to cut a fiber</span></div>
+        <div class="list" id="ports"></div>
+      </div>
+      <div class="panel glass console">
+        <div class="ph"><span class="t">Activity</span></div>
+        <div class="feed" id="feed"><div class="empty">awaiting traffic…</div></div>
+      </div>
+    </aside>
+  </main>
 </div>
 
 <script>
-  const PORT_HUES = { A: '#ffae3b', B: '#57d08a', C: '#6fb6ff', D: '#c98bff' };
   const STRAT_LABEL = {
     round_robin: 'round robin', weighted_round_robin: 'weighted rr',
     least_latency: 'least latency', least_active: 'least active',
     least_loaded: 'least loaded', p2c: 'power of two', ip_hash: 'ip hash',
   };
+  const C = { cyan: '#6ee7ff', violet: '#a78bfa', ok: '#46e5b5', half: '#f5b85a', down: '#fb6e84', ink: '#e8ecf6', mut: '#5a6178' };
   const $ = (id) => document.getElementById(id);
-  let latest = null, running = false, portRects = [], syncedSelect = false;
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let latest = null, running = false, portRects = [], syncedSelect = false;
 
-  // ---------- DOM render (driven by each SSE frame) ----------
-  function ledClass(b) {
+  function orbClass(b) {
     if (b.dead || !b.alive || b.breaker === 'open') return 'r';
     if (b.breaker === 'half_open') return 'a';
     return 'g';
   }
   function stateText(b) {
-    if (b.dead) return 'cable pulled';
+    if (b.dead) return 'fiber cut';
     if (!b.alive) return 'unreachable';
     return b.breaker === 'half_open' ? 'recovering' : b.breaker === 'open' ? 'ejected' : 'in service';
   }
+
   function renderDOM(s) {
     running = s.running;
-    $('power').className = 'led-power' + (running ? ' on' : '');
-    $('run').textContent = running ? '■ STOP' : '▶ RUN TEST';
+    $('pulse').className = 'pulse' + (running ? ' on' : '');
+    $('statusText').textContent = running ? `streaming · ${s.workers} workers · ${s.elapsed}s` : 'idle';
+    $('run').textContent = running ? 'Stop test' : 'Run test';
     $('run').className = 'run' + (running ? ' stop' : '');
     $('armed').style.opacity = running ? '0' : '1';
-    // Sync the dropdown to the server only on first load; after that it's the
-    // user's control and the LB node shows the authoritative active strategy.
     if (!syncedSelect) { $('strategy').value = s.strategy; syncedSelect = true; }
 
-    $('rps').innerHTML = s.rps + '<span class="un">req/s</span>';
-    $('p50').innerHTML = s.p50 + '<span class="un">ms</span>';
-    $('p99').innerHTML = s.p99 + '<span class="un">ms</span>';
-    const sc = s.successPct >= 99.9 ? 'var(--ok)' : s.successPct >= 95 ? 'var(--signal)' : 'var(--down)';
-    $('success').innerHTML = `<span style="color:${sc}">${s.successPct}</span><span class="un">%</span>`;
+    $('rps').innerHTML = s.rps + '<i>req/s</i>';
+    $('p50').innerHTML = s.p50 + '<i>ms</i>';
+    $('p99').innerHTML = s.p99 + '<i>ms</i>';
+    const sc = s.successPct >= 99.9 ? C.ok : s.successPct >= 95 ? C.half : C.down;
+    $('success').innerHTML = `<span style="color:${sc}">${s.successPct}</span><i>%</i>`;
     $('total').textContent = s.totals.total.toLocaleString();
 
-    $('ports').innerHTML = s.backends.map((b) => {
-      const hue = PORT_HUES[b.id] || 'var(--signal)';
-      return `<button type="button" class="port ${b.dead ? 'dead' : ''}" onclick="toggle('${b.id}')" aria-label="${b.label}, ${stateText(b)}. Click to ${b.dead ? 'revive' : 'kill'}.">
-        <span class="led ${ledClass(b)}"></span>
-        <span><span class="pname">${b.label}</span><div class="pmeta">${b.active} in-flight · ${b.latency} ms avg</div></span>
-        <span class="pright"><div class="pshare">${b.share}<span style="font-size:11px;color:var(--muted)">%</span></div><div class="pbar"><i style="width:${b.share}%;background:${hue}"></i></div><div class="pact">${stateText(b)}</div></span>
-      </button>`;
-    }).join('');
+    $('ports').innerHTML = s.backends.map((b) =>
+      `<button type="button" class="port ${b.dead ? 'dead' : ''}" onclick="toggle('${b.id}')" aria-label="${b.label}, ${stateText(b)}. Click to ${b.dead ? 'restore' : 'cut'}.">
+        <span class="orb ${orbClass(b)}"></span>
+        <span><span class="pname">${b.label}</span><span class="pmeta">${b.active} in-flight · ${b.latency} ms</span></span>
+        <span class="pright"><span class="pshare">${b.share}<span style="font-size:11px;color:var(--muted2)">%</span></span><span class="pbar"><i style="width:${b.share}%"></i></span><span class="pstate">${stateText(b)}</span></span>
+      </button>`
+    ).join('');
 
     $('feed').innerHTML = s.events.length
       ? s.events.slice().reverse().map((e) =>
           `<div class="row"><span class="ts">${new Date(e.ts).toTimeString().slice(0,8)}</span><span class="m ${e.kind}">${e.msg}</span></div>`
         ).join('')
-      : '<div class="empty">awaiting activity…</div>';
+      : '<div class="empty">awaiting traffic…</div>';
 
     drawScope(s.series.rps);
   }
 
-  // ---------- throughput scope ----------
+  // ---------- canvas helpers ----------
   function fit(c, h) {
-    const dpr = window.devicePixelRatio || 1, w = c.clientWidth;
-    const hh = h || c.clientHeight;
+    const dpr = window.devicePixelRatio || 1, w = c.clientWidth, hh = h || c.clientHeight;
     c.width = w * dpr; c.height = hh * dpr;
     const x = c.getContext('2d'); x.setTransform(dpr, 0, 0, dpr, 0, 0);
     return { x, w, h: hh };
@@ -261,27 +261,25 @@
   function drawScope(data) {
     const c = $('scope'); const { x, w, h } = fit(c);
     x.clearRect(0, 0, w, h);
-    x.strokeStyle = '#23282f'; x.lineWidth = 1;
-    for (let i = 1; i < 3; i++) { const y = (h/3)*i; x.beginPath(); x.moveTo(0,y); x.lineTo(w,y); x.stroke(); }
     if (!data || !data.length) return;
-    let max = 1; for (const v of data) if (v > max) max = v; max *= 1.2;
+    let max = 1; for (const v of data) if (v > max) max = v; max *= 1.25;
     const step = w / Math.max(1, data.length - 1);
     x.beginPath();
-    data.forEach((v, i) => { const px = i*step, py = h - (v/max)*h; i ? x.lineTo(px,py) : x.moveTo(px,py); });
-    x.strokeStyle = '#ffae3b'; x.lineWidth = 1.5; x.lineJoin = 'round'; x.stroke();
-    x.lineTo((data.length-1)*step, h); x.lineTo(0, h); x.closePath();
-    const g = x.createLinearGradient(0,0,0,h); g.addColorStop(0,'#ffae3b30'); g.addColorStop(1,'#ffae3b00');
-    x.fillStyle = g; x.fill();
+    data.forEach((v, i) => { const px = i * step, py = h - (v / max) * (h - 4) - 2; i ? x.lineTo(px, py) : x.moveTo(px, py); });
+    const g = x.createLinearGradient(0, 0, w, 0); g.addColorStop(0, C.cyan); g.addColorStop(1, C.violet);
+    x.strokeStyle = g; x.lineWidth = 1.75; x.lineJoin = 'round';
+    x.shadowColor = C.cyan; x.shadowBlur = 8; x.stroke(); x.shadowBlur = 0;
+    x.lineTo((data.length - 1) * step, h); x.lineTo(0, h); x.closePath();
+    const f = x.createLinearGradient(0, 0, 0, h); f.addColorStop(0, 'rgba(110,231,255,.18)'); f.addColorStop(1, 'rgba(110,231,255,0)');
+    x.fillStyle = f; x.fill();
   }
 
-  // ---------- the routing graph (signature) ----------
+  // ---------- the fiber routing graph (signature) ----------
   const pulses = []; let spawnAcc = 0, lastT = 0;
   function bez(t, p0, p1, p2, p3) {
     const u = 1 - t;
-    return {
-      x: u*u*u*p0.x + 3*u*u*t*p1.x + 3*u*t*t*p2.x + t*t*t*p3.x,
-      y: u*u*u*p0.y + 3*u*u*t*p1.y + 3*u*t*t*p2.y + t*t*t*p3.y,
-    };
+    return { x: u*u*u*p0.x + 3*u*u*t*p1.x + 3*u*t*t*p2.x + t*t*t*p3.x,
+             y: u*u*u*p0.y + 3*u*u*t*p1.y + 3*u*t*t*p2.y + t*t*t*p3.y };
   }
   function pickPort(backs) {
     const elig = backs.filter((b) => !b.dead && b.alive && b.share > 0);
@@ -291,160 +289,158 @@
     for (const b of elig) { r -= b.share; if (r <= 0) return b; }
     return elig[elig.length - 1];
   }
+  function rr(x, X, Y, w, h, r) {
+    x.beginPath(); x.moveTo(X+r, Y); x.arcTo(X+w, Y, X+w, Y+h, r); x.arcTo(X+w, Y+h, X, Y+h, r);
+    x.arcTo(X, Y+h, X, Y, r); x.arcTo(X, Y, X+w, Y, r); x.closePath();
+  }
+  function glassNode(x, X, Y, w, h, r, border) {
+    x.save();
+    x.shadowColor = 'rgba(0,0,0,.55)'; x.shadowBlur = 26; x.shadowOffsetY = 10;
+    const g = x.createLinearGradient(0, Y, 0, Y + h); g.addColorStop(0, 'rgba(255,255,255,.07)'); g.addColorStop(1, 'rgba(255,255,255,.02)');
+    x.fillStyle = g; rr(x, X, Y, w, h, r); x.fill();
+    x.restore();
+    x.strokeStyle = border; x.lineWidth = 1; rr(x, X, Y, w, h, r); x.stroke();
+  }
+
   function frame(ts) {
     const c = $('graph'); const { x, w, h } = fit(c);
     const dt = lastT ? Math.min(0.05, (ts - lastT) / 1000) : 0; lastT = ts;
     x.clearRect(0, 0, w, h);
 
-    // graticule
-    x.strokeStyle = '#1e232b'; x.lineWidth = 1;
-    for (let gx = 28; gx < w; gx += 28) { x.beginPath(); x.moveTo(gx,0); x.lineTo(gx,h); x.stroke(); }
-    for (let gy = 28; gy < h; gy += 28) { x.beginPath(); x.moveTo(0,gy); x.lineTo(w,gy); x.stroke(); }
-
-    const s = latest;
-    const backs = s ? s.backends : [];
+    const s = latest, backs = s ? s.backends : [];
     const n = Math.max(1, backs.length);
-    const ingress = { x: 46, y: h/2 };
-    const lb = { x: w*0.40, y: h/2, w: 146, h: 84 };
-    const lbRight = lb.x + lb.w/2;
-    const portX = w - 132;
-    const slot = h / (n + 1);
+    const ingress = { x: 52, y: h / 2 };
+    const lb = { x: w * 0.40, y: h / 2, w: 158, h: 92 };
+    const lbRight = lb.x + lb.w / 2;
+    const portX = w - 150, slot = h / (n + 1);
     portRects = [];
-    const portPts = backs.map((b, i) => ({ b, x: portX, y: slot*(i+1) }));
+    const pts = backs.map((b, i) => ({ b, x: portX, y: slot * (i + 1) }));
 
-    // ingress -> LB wire
-    const totalActive = s && s.rps > 0;
-    x.strokeStyle = totalActive ? '#ffae3b' : '#2a2f38';
-    x.globalAlpha = totalActive ? 0.5 : 1; x.lineWidth = totalActive ? 2.5 : 1.5;
-    x.beginPath(); x.moveTo(ingress.x+8, ingress.y); x.lineTo(lb.x - lb.w/2, lb.y); x.stroke();
-    x.globalAlpha = 1;
+    // ingress -> LB fiber
+    const live = s && s.rps > 0;
+    x.lineCap = 'round';
+    {
+      const g = x.createLinearGradient(ingress.x, 0, lb.x - lb.w/2, 0);
+      g.addColorStop(0, 'rgba(110,231,255,.12)'); g.addColorStop(1, live ? 'rgba(110,231,255,.55)' : 'rgba(110,231,255,.12)');
+      x.strokeStyle = g; x.lineWidth = live ? 2.5 : 1.5;
+      if (live) { x.shadowColor = C.cyan; x.shadowBlur = 10; }
+      x.beginPath(); x.moveTo(ingress.x + 10, ingress.y); x.lineTo(lb.x - lb.w/2, lb.y); x.stroke();
+      x.shadowBlur = 0;
+    }
 
-    // LB -> port wires
-    for (const p of portPts) {
-      const c1 = { x: lbRight + 70, y: lb.y }, c2 = { x: p.x - 70, y: p.y };
+    // LB -> port fibers
+    for (const p of pts) {
+      const c1 = { x: lbRight + 80, y: lb.y }, c2 = { x: p.x - 80, y: p.y };
       const dead = p.b.dead || !p.b.alive || p.b.breaker === 'open';
       const share = p.b.share || 0;
-      // base
-      x.strokeStyle = '#262b33'; x.lineWidth = 1; x.setLineDash([]);
+      x.strokeStyle = 'rgba(110,231,255,.06)'; x.lineWidth = 1; x.setLineDash([]);
       x.beginPath(); x.moveTo(lbRight, lb.y); x.bezierCurveTo(c1.x,c1.y,c2.x,c2.y,p.x,p.y); x.stroke();
-      // live overlay
       if (dead) {
-        x.strokeStyle = '#ff5d52'; x.globalAlpha = 0.5; x.lineWidth = 1.5; x.setLineDash([4,5]);
+        x.strokeStyle = 'rgba(251,110,132,.5)'; x.lineWidth = 1.4; x.setLineDash([2,7]);
         x.beginPath(); x.moveTo(lbRight, lb.y); x.bezierCurveTo(c1.x,c1.y,c2.x,c2.y,p.x,p.y); x.stroke();
-        x.setLineDash([]); x.globalAlpha = 1;
+        x.setLineDash([]);
       } else if (share > 0) {
-        x.strokeStyle = '#ffae3b'; x.globalAlpha = 0.12 + (share/100)*0.55; x.lineWidth = 1 + (share/100)*3.5;
+        const g = x.createLinearGradient(lbRight, 0, p.x, 0);
+        g.addColorStop(0, 'rgba(110,231,255,' + (0.3 + (share/100)*0.5) + ')');
+        g.addColorStop(1, 'rgba(167,139,250,' + (0.15 + (share/100)*0.4) + ')');
+        x.strokeStyle = g; x.lineWidth = 1 + (share/100)*4.5;
+        x.shadowColor = C.cyan; x.shadowBlur = 7 + (share/100)*8;
         x.beginPath(); x.moveTo(lbRight, lb.y); x.bezierCurveTo(c1.x,c1.y,c2.x,c2.y,p.x,p.y); x.stroke();
-        x.globalAlpha = 1;
+        x.shadowBlur = 0;
       }
       p._c1 = c1; p._c2 = c2;
     }
 
-    // spawn pulses ~ proportional to rps
+    // light pulses
     if (s && s.running && s.rps > 0 && !reduce) {
       spawnAcc += s.rps * dt * 0.06;
-      while (spawnAcc >= 1 && pulses.length < 240) { spawnAcc -= 1; pulses.push({ leg: 'in', t: 0, port: null }); }
+      while (spawnAcc >= 1 && pulses.length < 260) { spawnAcc -= 1; pulses.push({ leg: 'in', t: 0, port: null }); }
     }
-    // advance + draw pulses
-    x.shadowColor = '#ffae3b';
     for (let i = pulses.length - 1; i >= 0; i--) {
-      const p = pulses[i];
-      p.t += dt / 0.6;
+      const p = pulses[i]; p.t += dt / 0.62;
       let pos;
       if (p.leg === 'in') {
-        pos = { x: ingress.x + 8 + (lb.x - lb.w/2 - ingress.x - 8) * p.t, y: lb.y };
+        pos = { x: ingress.x + 10 + (lb.x - lb.w/2 - ingress.x - 10) * p.t, y: lb.y };
         if (p.t >= 1) {
-          const target = pickPort(backs);
-          if (!target) { pulses.splice(i,1); continue; }
-          const pp = portPts.find((q) => q.b.id === target.id);
-          p.leg = 'out'; p.t = 0; p.port = pp;
-          continue;
+          const target = pickPort(backs); if (!target) { pulses.splice(i,1); continue; }
+          p.leg = 'out'; p.t = 0; p.port = pts.find((q) => q.b.id === target.id); continue;
         }
       } else {
-        const pp = p.port;
-        if (!pp || pp.b.dead) { pulses.splice(i,1); continue; }
+        const pp = p.port; if (!pp || pp.b.dead) { pulses.splice(i,1); continue; }
         pos = bez(p.t, { x: lbRight, y: lb.y }, pp._c1, pp._c2, { x: pp.x, y: pp.y });
-        if (p.t >= 1) { pulses.splice(i,1); }
+        if (p.t >= 1) pulses.splice(i,1);
       }
-      x.shadowBlur = 6; x.fillStyle = '#ffd58a';
-      x.beginPath(); x.arc(pos.x, pos.y, 2.4, 0, 7); x.fill();
+      x.shadowColor = C.cyan; x.shadowBlur = 12;
+      x.fillStyle = 'rgba(150,240,255,.4)'; x.beginPath(); x.arc(pos.x, pos.y, 4.5, 0, 7); x.fill();
+      x.fillStyle = '#ffffff'; x.beginPath(); x.arc(pos.x, pos.y, 1.7, 0, 7); x.fill();
     }
     x.shadowBlur = 0;
 
     // ingress node
-    x.fillStyle = '#262b34'; x.strokeStyle = '#333a45'; x.lineWidth = 1;
-    roundRect(x, ingress.x - 8, ingress.y - 26, 16, 52, 5); x.fill(); x.stroke();
-    x.fillStyle = '#889'; x.font = '600 9px "IBM Plex Mono", monospace'; x.textAlign = 'center';
-    x.save(); x.translate(ingress.x - 16, ingress.y); x.rotate(-Math.PI/2);
-    x.fillText('INGRESS', 0, 0); x.restore();
+    glassNode(x, ingress.x - 9, ingress.y - 30, 18, 60, 6, 'rgba(110,231,255,.25)');
+    x.fillStyle = C.mut; x.font = '600 8.5px "JetBrains Mono", monospace'; x.textAlign = 'center';
+    x.save(); x.translate(ingress.x - 18, ingress.y); x.rotate(-Math.PI/2); x.fillText('INGRESS', 0, 0); x.restore();
 
-    // LB node
-    x.fillStyle = '#20242b'; x.strokeStyle = s && s.running ? '#ffae3b' : '#3a424e'; x.lineWidth = 1.5;
-    roundRect(x, lb.x - lb.w/2, lb.y - lb.h/2, lb.w, lb.h, 10); x.fill(); x.stroke();
+    // LB core (glow + glass)
+    const lbx = lb.x - lb.w/2, lby = lb.y - lb.h/2;
+    const halo = x.createRadialGradient(lb.x, lb.y, 6, lb.x, lb.y, 130);
+    halo.addColorStop(0, live ? 'rgba(110,231,255,.22)' : 'rgba(110,231,255,.08)');
+    halo.addColorStop(.5, 'rgba(167,139,250,.08)'); halo.addColorStop(1, 'rgba(167,139,250,0)');
+    x.fillStyle = halo; x.beginPath(); x.arc(lb.x, lb.y, 130, 0, 7); x.fill();
+    glassNode(x, lbx, lby, lb.w, lb.h, 14, live ? 'rgba(110,231,255,.55)' : 'rgba(255,255,255,.14)');
     x.textAlign = 'center';
-    x.fillStyle = '#6a7079'; x.font = '600 9px "IBM Plex Mono", monospace';
-    x.fillText('LOAD BALANCER', lb.x, lb.y - 28);
-    x.fillStyle = '#ece8df'; x.font = '700 22px "IBM Plex Mono", monospace';
-    x.fillText(s ? s.rps : 0, lb.x, lb.y - 2);
-    x.fillStyle = '#6a7079'; x.font = '500 8px "IBM Plex Mono", monospace';
-    x.fillText('req/s', lb.x, lb.y + 9);
-    // divider + active routing strategy (authoritative, updates live)
-    x.strokeStyle = '#333a45'; x.lineWidth = 1;
-    x.beginPath(); x.moveTo(lb.x - lb.w/2 + 14, lb.y + 18); x.lineTo(lb.x + lb.w/2 - 14, lb.y + 18); x.stroke();
-    x.fillStyle = '#ffae3b'; x.font = '600 10px "IBM Plex Mono", monospace';
-    x.fillText((STRAT_LABEL[s && s.strategy] || (s && s.strategy) || '').toUpperCase(), lb.x, lb.y + 31);
+    x.fillStyle = C.mut; x.font = '600 8.5px "JetBrains Mono", monospace';
+    x.fillText('LOAD BALANCER', lb.x, lb.y - 30);
+    x.fillStyle = C.ink; x.font = '500 28px "JetBrains Mono", monospace';
+    x.fillText(s ? s.rps : 0, lb.x, lb.y + 1);
+    x.fillStyle = C.mut; x.font = '500 8px "JetBrains Mono", monospace';
+    x.fillText('req / s', lb.x, lb.y + 14);
+    x.strokeStyle = 'rgba(255,255,255,.1)'; x.lineWidth = 1;
+    x.beginPath(); x.moveTo(lbx + 18, lb.y + 22); x.lineTo(lbx + lb.w - 18, lb.y + 22); x.stroke();
+    x.fillStyle = C.violet; x.font = '700 10px "JetBrains Mono", monospace';
+    x.fillText((STRAT_LABEL[s && s.strategy] || (s && s.strategy) || '').toUpperCase(), lb.x, lb.y + 35);
 
-    // port nodes (clickable)
-    for (const p of portPts) {
+    // port nodes
+    for (const p of pts) {
       const b = p.b, dead = b.dead || !b.alive || b.breaker === 'open';
-      const led = dead ? '#ff5d52' : b.breaker === 'half_open' ? '#ffae3b' : '#57d08a';
-      const bw = 116, bh = 40, bx = p.x, by = p.y - bh/2;
+      const col = dead ? C.down : b.breaker === 'half_open' ? C.half : C.ok;
+      const bw = 124, bh = 46, bx = p.x, by = p.y - bh/2;
       portRects.push({ id: b.id, x: bx, y: by, w: bw, h: bh });
-      x.fillStyle = '#262b34'; x.globalAlpha = dead ? 0.55 : 1;
-      x.strokeStyle = '#333a45'; x.lineWidth = 1;
-      roundRect(x, bx, by, bw, bh, 8); x.fill(); x.stroke();
-      x.shadowColor = led; x.shadowBlur = dead ? 0 : 6; x.fillStyle = led;
-      x.beginPath(); x.arc(bx + 14, p.y, 4.5, 0, 7); x.fill(); x.shadowBlur = 0;
-      x.textAlign = 'left'; x.fillStyle = '#ece8df'; x.font = '600 11px "IBM Plex Mono", monospace';
-      x.fillText(b.id, bx + 26, p.y - 2);
-      x.fillStyle = '#6a7079'; x.font = '500 9px "IBM Plex Mono", monospace';
-      x.fillText(b.latency + 'ms · ' + b.share + '%', bx + 26, p.y + 10);
+      x.globalAlpha = dead ? 0.5 : 1;
+      glassNode(x, bx, by, bw, bh, 11, 'rgba(255,255,255,.12)');
+      x.shadowColor = col; x.shadowBlur = dead ? 0 : 11; x.fillStyle = col;
+      x.beginPath(); x.arc(bx + 17, p.y, 5, 0, 7); x.fill(); x.shadowBlur = 0;
+      x.textAlign = 'left'; x.fillStyle = C.ink; x.font = '600 12px "Sora", sans-serif';
+      x.fillText(b.id, bx + 30, p.y - 3);
+      x.fillStyle = C.mut; x.font = '500 9px "JetBrains Mono", monospace';
+      x.fillText(b.latency + 'ms · ' + b.share + '%', bx + 30, p.y + 11);
       x.globalAlpha = 1;
     }
 
     requestAnimationFrame(frame);
   }
-  function roundRect(x, X, Y, w, h, r) {
-    x.beginPath();
-    x.moveTo(X+r, Y); x.arcTo(X+w, Y, X+w, Y+h, r); x.arcTo(X+w, Y+h, X, Y+h, r);
-    x.arcTo(X, Y+h, X, Y, r); x.arcTo(X, Y, X+w, Y, r); x.closePath();
-  }
 
-  // click a port in the graph to pull its cable
+  // click a port node to cut its fiber
   $('graph').addEventListener('click', (e) => {
-    const rect = e.target.getBoundingClientRect();
-    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
-    for (const r of portRects) {
-      if (cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h) { toggle(r.id); break; }
-    }
+    const r = e.target.getBoundingClientRect(), cx = e.clientX - r.left, cy = e.clientY - r.top;
+    for (const p of portRects) if (cx >= p.x && cx <= p.x + p.w && cy >= p.y && cy <= p.y + p.h) { toggle(p.id); break; }
   });
   $('graph').addEventListener('mousemove', (e) => {
-    const rect = e.target.getBoundingClientRect();
-    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
-    const over = portRects.some((r) => cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h);
-    e.target.style.cursor = over ? 'pointer' : 'default';
+    const r = e.target.getBoundingClientRect(), cx = e.clientX - r.left, cy = e.clientY - r.top;
+    e.target.style.cursor = portRects.some((p) => cx >= p.x && cx <= p.x + p.w && cy >= p.y && cy <= p.y + p.h) ? 'pointer' : 'default';
   });
 
-  // ---------- controls ----------
+  // controls
   $('run').onclick = () => fetch('/api/test/' + (running ? 'stop' : 'start'), { method: 'POST' });
   $('strategy').onchange = (e) => fetch('/api/strategy', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ strategy: e.target.value }),
   });
   window.toggle = (id) => fetch('/api/backend/' + id + '/toggle', { method: 'POST' });
 
-  // ---------- live stream ----------
+  // live stream
   const es = new EventSource('/api/stream');
   es.onmessage = (e) => { try { latest = JSON.parse(e.data); renderDOM(latest); } catch {} };
+  es.onerror = () => { $('statusText').textContent = 'reconnecting…'; };
   requestAnimationFrame(frame);
   window.addEventListener('resize', () => latest && drawScope(latest.series.rps));
 </script>
