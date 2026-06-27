@@ -193,8 +193,13 @@
 
 <script>
   const PORT_HUES = { A: '#ffae3b', B: '#57d08a', C: '#6fb6ff', D: '#c98bff' };
+  const STRAT_LABEL = {
+    round_robin: 'round robin', weighted_round_robin: 'weighted rr',
+    least_latency: 'least latency', least_active: 'least active',
+    least_loaded: 'least loaded', p2c: 'power of two', ip_hash: 'ip hash',
+  };
   const $ = (id) => document.getElementById(id);
-  let latest = null, running = false, portRects = [];
+  let latest = null, running = false, portRects = [], syncedSelect = false;
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // ---------- DOM render (driven by each SSE frame) ----------
@@ -214,7 +219,9 @@
     $('run').textContent = running ? '■ STOP' : '▶ RUN TEST';
     $('run').className = 'run' + (running ? ' stop' : '');
     $('armed').style.opacity = running ? '0' : '1';
-    if (document.activeElement !== $('strategy')) $('strategy').value = s.strategy;
+    // Sync the dropdown to the server only on first load; after that it's the
+    // user's control and the LB node shows the authoritative active strategy.
+    if (!syncedSelect) { $('strategy').value = s.strategy; syncedSelect = true; }
 
     $('rps').innerHTML = s.rps + '<span class="un">req/s</span>';
     $('p50').innerHTML = s.p50 + '<span class="un">ms</span>';
@@ -295,7 +302,7 @@
     const backs = s ? s.backends : [];
     const n = Math.max(1, backs.length);
     const ingress = { x: 46, y: h/2 };
-    const lb = { x: w*0.40, y: h/2, w: 132, h: 64 };
+    const lb = { x: w*0.40, y: h/2, w: 146, h: 84 };
     const lbRight = lb.x + lb.w/2;
     const portX = w - 132;
     const slot = h / (n + 1);
@@ -373,11 +380,16 @@
     roundRect(x, lb.x - lb.w/2, lb.y - lb.h/2, lb.w, lb.h, 10); x.fill(); x.stroke();
     x.textAlign = 'center';
     x.fillStyle = '#6a7079'; x.font = '600 9px "IBM Plex Mono", monospace';
-    x.fillText('LOAD BALANCER', lb.x, lb.y - 16);
+    x.fillText('LOAD BALANCER', lb.x, lb.y - 28);
     x.fillStyle = '#ece8df'; x.font = '700 22px "IBM Plex Mono", monospace';
-    x.fillText(s ? s.rps : 0, lb.x, lb.y + 8);
-    x.fillStyle = '#ffae3b'; x.font = '500 9px "IBM Plex Mono", monospace';
-    x.fillText('req/s', lb.x, lb.y + 22);
+    x.fillText(s ? s.rps : 0, lb.x, lb.y - 2);
+    x.fillStyle = '#6a7079'; x.font = '500 8px "IBM Plex Mono", monospace';
+    x.fillText('req/s', lb.x, lb.y + 9);
+    // divider + active routing strategy (authoritative, updates live)
+    x.strokeStyle = '#333a45'; x.lineWidth = 1;
+    x.beginPath(); x.moveTo(lb.x - lb.w/2 + 14, lb.y + 18); x.lineTo(lb.x + lb.w/2 - 14, lb.y + 18); x.stroke();
+    x.fillStyle = '#ffae3b'; x.font = '600 10px "IBM Plex Mono", monospace';
+    x.fillText((STRAT_LABEL[s && s.strategy] || (s && s.strategy) || '').toUpperCase(), lb.x, lb.y + 31);
 
     // port nodes (clickable)
     for (const p of portPts) {

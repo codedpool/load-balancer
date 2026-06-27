@@ -144,7 +144,7 @@ async function main() {
     state.totals = { ok: 0, failed: 0, total: 0 };
     state.byBackend = {};
     state.series = { rps: [], p50: [], p99: [] };
-    addEvent(`Load test started — ${WORKERS} workers, strategy "${state.strategy}"`, 'good');
+    addEvent(`Load test started — ${WORKERS} workers`, 'good');
     for (let i = 0; i < WORKERS; i += 1) worker();
   }
   function stopTest() {
