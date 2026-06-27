@@ -18,22 +18,23 @@
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
-    margin: 0; background: var(--rack); color: var(--ink);
+    margin: 0; height: 100vh; overflow: hidden;
+    background: var(--rack); color: var(--ink);
     font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace;
     -webkit-font-smoothing: antialiased;
   }
   .disp { font-family: "Archivo", system-ui, sans-serif; }
   .lab { font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--muted2); }
 
-  .shell { max-width: 1180px; margin: 0 auto; padding: 18px; min-height: 100%; }
+  .shell { height: 100vh; padding: 0; display: flex; flex-direction: column; }
 
-  /* device panel */
+  /* device panel — full bleed */
   .device {
+    flex: 1; min-height: 0; display: flex; flex-direction: column;
     background:
-      linear-gradient(180deg, rgba(255,255,255,.025), rgba(0,0,0,.18)),
+      linear-gradient(180deg, rgba(255,255,255,.02), rgba(0,0,0,.16)),
       var(--panel);
-    border: 1px solid var(--edge); border-radius: 14px;
-    box-shadow: 0 1px 0 rgba(255,255,255,.04) inset, 0 24px 60px -30px #000;
+    box-shadow: 0 1px 0 rgba(255,255,255,.04) inset;
     overflow: hidden;
   }
 
@@ -70,22 +71,23 @@
   .gauge.live .val { color: var(--signal); }
 
   /* body grid */
-  .body { display: grid; grid-template-columns: 1.6fr 1fr; }
-  .bay { border-right: 1px solid var(--line); }
-  .graphwrap { position: relative; }
-  canvas#graph { display: block; width: 100%; height: 360px; }
+  .body { flex: 1; min-height: 0; display: grid; grid-template-columns: 1.6fr 1fr; }
+  .bay { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .graphwrap { position: relative; flex: 1; min-height: 0; }
+  canvas#graph { display: block; width: 100%; height: 100%; }
   .armed {
-    position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
-    color: var(--muted); font-size: 12px; letter-spacing: .16em; text-transform: uppercase;
+    position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: center;
+    padding-bottom: 18px; pointer-events: none;
+    color: var(--muted2); font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
     transition: opacity .4s ease;
   }
-  .scope { border-top: 1px solid var(--line); padding: 12px 16px 14px; }
+  .scope { border-top: 1px solid var(--line); padding: 12px 16px 14px; flex: none; }
   .scope .lab { margin-bottom: 8px; }
-  canvas#scope { display: block; width: 100%; height: 74px; }
+  canvas#scope { display: block; width: 100%; height: 72px; }
 
   /* ports panel */
-  .side { display: flex; flex-direction: column; }
-  .ports { padding: 10px 12px; }
+  .side { display: flex; flex-direction: column; min-height: 0; }
+  .ports { padding: 10px 12px; flex: none; }
   .ports .lab { padding: 6px 6px 10px; }
   .port {
     display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px;
@@ -107,20 +109,21 @@
   .port .pbar > i { display: block; height: 100%; }
   .port .pact { font-size: 10px; color: var(--muted2); letter-spacing: .12em; text-transform: uppercase; margin-top: 6px; }
 
-  .console { border-top: 1px solid var(--line); padding: 12px 14px; flex: 1; display: flex; flex-direction: column; min-height: 150px; }
+  .console { border-top: 1px solid var(--line); padding: 12px 14px; flex: 1; display: flex; flex-direction: column; min-height: 0; }
   .console .lab { margin-bottom: 8px; }
-  .feed { font-size: 12px; line-height: 1.7; overflow-y: auto; max-height: 200px; }
+  .feed { font-size: 12px; line-height: 1.7; overflow-y: auto; flex: 1; min-height: 0; }
   .feed .row { display: flex; gap: 10px; }
   .feed .ts { color: var(--muted2); }
   .feed .m.good { color: var(--ok); } .feed .m.bad { color: var(--down); } .feed .m.info { color: var(--ink); }
   .feed .empty { color: var(--muted2); }
 
-  .foot { padding: 12px 4px 4px; color: var(--muted2); font-size: 11px; text-align: center; letter-spacing: .04em; }
-  .foot b { color: var(--muted); font-weight: 500; }
-
   @media (max-width: 860px) {
+    html, body { height: auto; overflow: auto; }
+    .shell { height: auto; }
+    .device { min-height: 100vh; }
     .body { grid-template-columns: 1fr; }
     .bay { border-right: none; border-bottom: 1px solid var(--line); }
+    .graphwrap { height: 300px; flex: none; }
     .strip { grid-template-columns: repeat(2, 1fr); }
     .gauge:nth-child(odd) { border-right: 1px solid var(--line); }
   }
@@ -188,7 +191,6 @@
     </div>
 
   </div>
-  <div class="foot">Real traffic flows through the actual proxy. Health, failover and the circuit breaker are <b>live</b> — nothing here is simulated.</div>
 </div>
 
 <script>
@@ -251,12 +253,13 @@
   // ---------- throughput scope ----------
   function fit(c, h) {
     const dpr = window.devicePixelRatio || 1, w = c.clientWidth;
-    c.width = w * dpr; c.height = h * dpr;
+    const hh = h || c.clientHeight;
+    c.width = w * dpr; c.height = hh * dpr;
     const x = c.getContext('2d'); x.setTransform(dpr, 0, 0, dpr, 0, 0);
-    return { x, w, h };
+    return { x, w, h: hh };
   }
   function drawScope(data) {
-    const c = $('scope'); const { x, w, h } = fit(c, 74);
+    const c = $('scope'); const { x, w, h } = fit(c);
     x.clearRect(0, 0, w, h);
     x.strokeStyle = '#23282f'; x.lineWidth = 1;
     for (let i = 1; i < 3; i++) { const y = (h/3)*i; x.beginPath(); x.moveTo(0,y); x.lineTo(w,y); x.stroke(); }
@@ -289,7 +292,7 @@
     return elig[elig.length - 1];
   }
   function frame(ts) {
-    const c = $('graph'); const { x, w, h } = fit(c, 360);
+    const c = $('graph'); const { x, w, h } = fit(c);
     const dt = lastT ? Math.min(0.05, (ts - lastT) / 1000) : 0; lastT = ts;
     x.clearRect(0, 0, w, h);
 
