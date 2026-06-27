@@ -1,17 +1,30 @@
 # One-command full stack:  docker-compose up --build
 #
-#   lb            -> load balancer (data :8080, admin :8090)
-#   user1..post2  -> mock backend services
-#   redis         -> shared store for distributed rate limiting
-#   prometheus    -> scrapes lb:8080/metrics  (http://localhost:9090)
-#   grafana       -> dashboards               (http://localhost:3000, admin/admin)
+# Two ways to see the system, both included:
+#   dashboard  -> live interactive demo (self-contained)   http://localhost:3000
+#   lb         -> the real proxy you push traffic through   http://localhost:8080
+#                 observed by Prometheus + Grafana below
 #
-# Try it:  curl localhost:8080/users   then watch Grafana.
-version: '3.8'
-
+#   user1..post2 -> mock backend services behind lb
+#   redis        -> shared store for distributed rate limiting
+#   prometheus   -> scrapes lb:8080/metrics                 http://localhost:9090
+#   grafana      -> dashboards (admin/admin)                http://localhost:3001
 services:
+  # Self-contained interactive dashboard — boots its own balancer + backends.
+  # This is the screen you open and click "Run Test" on.
+  dashboard:
+    build: .
+    command: node src/dashboard.js
+    environment:
+      - PORT=3000
+    # Host port is overridable (DASHBOARD_PORT=3010 docker compose up) in case
+    # something local already holds 3000.
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+
   lb:
     build: .
+    command: node src/server.js
     ports:
       - "8080:8080"
       - "8090:8090"
@@ -58,7 +71,7 @@ services:
   grafana:
     image: grafana/grafana:latest
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:

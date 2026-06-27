@@ -195,14 +195,18 @@ curl http://localhost:8080/users
 
 ### Docker (full stack, one command)
 
-Brings up the load balancer, five mock backends, Redis (shared rate limiting),
-Prometheus, and Grafana — wired together:
+Brings up the live dashboard, the proxy, five mock backends, Redis (shared rate
+limiting), Prometheus, and Grafana — wired together:
 
 ```bash
-docker-compose up --build
-curl localhost:8080/users        # data plane
-# Prometheus: http://localhost:9090   Grafana: http://localhost:3000 (admin/admin)
+docker compose up --build
+# Dashboard:  http://localhost:3000      (the interactive demo)
+# Proxy:      curl localhost:8080/users  (data plane)
+# Prometheus: http://localhost:9090      Grafana: http://localhost:3001 (admin/admin)
 ```
+
+If port 3000 is already in use (e.g. a local `npm run dashboard`), override it:
+`DASHBOARD_PORT=3010 docker compose up`.
 
 ### Live dashboard (hostable web UI)
 
