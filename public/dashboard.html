@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Load Balancer — Live Dashboard</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #11151d; --panel2: #161b25; --border: #232a36;
+    --text: #e6edf3; --muted: #8b949e; --green: #3fb950; --amber: #d29922;
+    --red: #f85149; --blue: #58a6ff; --accent: #7c5cff;
+    --A: #58a6ff; --B: #3fb950; --C: #d29922; --D: #f778ba;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .mono { font-family: "SF Mono", "Cascadia Code", Consolas, monospace; }
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 14px 22px;
+    border-bottom: 1px solid var(--border); background: var(--panel);
+    position: sticky; top: 0; z-index: 10; flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+  header h1 .dot { color: var(--accent); }
+  .spacer { flex: 1; }
+  .live { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; }
+  .pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .pulse.on { background: var(--green); box-shadow: 0 0 0 0 rgba(63,185,80,.6); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(63,185,80,.5)} 70%{box-shadow:0 0 0 7px rgba(63,185,80,0)} 100%{box-shadow:0 0 0 0 rgba(63,185,80,0)} }
+  select, button {
+    font: inherit; color: var(--text); background: var(--panel2);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; cursor: pointer;
+  }
+  select:hover, button:hover { border-color: #3a4453; }
+  .btn-primary {
+    font-weight: 650; padding: 9px 20px; border: none;
+    background: var(--green); color: #04230d;
+  }
+  .btn-primary.running { background: var(--red); color: #fff; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 22px; }
+  .grid-stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+  .card .v { font-size: 26px; font-weight: 650; margin-top: 4px; }
+  .card .u { color: var(--muted); font-size: 13px; font-weight: 400; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .panel h2 { font-size: 13px; margin: 0 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; font-weight: 600; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+  .legend .l50::before { background: var(--blue); } .legend .l99::before { background: var(--amber); }
+  canvas { width: 100%; height: 150px; display: block; }
+  .backends { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 16px; }
+  .be { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .be-top { display: flex; align-items: center; gap: 10px; }
+  .be .sdot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+  .sdot.green { background: var(--green); } .sdot.amber { background: var(--amber); } .sdot.red { background: var(--red); }
+  .be .name { font-weight: 600; }
+  .be .state { color: var(--muted); font-size: 12px; }
+  .be-meta { display: flex; gap: 18px; margin: 10px 0 8px; font-size: 13px; }
+  .be-meta b { font-weight: 650; }
+  .be-meta .lbl { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; display: block; }
+  .bar { height: 8px; background: var(--panel2); border-radius: 5px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; border-radius: 5px; transition: width .4s ease; }
+  .be-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+  .be-foot .share { color: var(--muted); font-size: 12px; }
+  .kill { padding: 5px 12px; font-size: 12px; border-radius: 7px; }
+  .kill.revive { color: var(--green); border-color: #1f3d28; }
+  .events { max-height: 280px; overflow-y: auto; font-size: 13px; }
+  .ev { display: flex; gap: 10px; padding: 5px 0; border-bottom: 1px solid #1a2029; }
+  .ev .t { color: var(--muted); flex-shrink: 0; }
+  .ev.good .m { color: var(--green); } .ev.bad .m { color: var(--red); } .ev.info .m { color: var(--text); }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 18px; text-align: center; }
+  @media (max-width: 820px) { .grid-stats { grid-template-columns: repeat(3,1fr);} .row2,.backends{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="dot">●</span> Load Balancer <span style="color:var(--muted);font-weight:400">live dashboard</span></h1>
+  <div class="live"><span class="pulse" id="pulse"></span><span id="liveText">idle</span></div>
+  <div class="spacer"></div>
+  <label class="live" style="gap:8px">strategy
+    <select id="strategy" title="Switch the balancing strategy live">
+      <option value="round_robin">round_robin</option>
+      <option value="weighted_round_robin">weighted_round_robin</option>
+      <option value="least_latency">least_latency</option>
+      <option value="least_active">least_active</option>
+      <option value="least_loaded">least_loaded</option>
+      <option value="p2c">p2c (power of two)</option>
+      <option value="ip_hash">ip_hash</option>
+    </select>
+  </label>
+  <button class="btn-primary" id="testBtn">▶ Start Test</button>
+</header>
+
+<div class="wrap">
+  <div class="grid-stats">
+    <div class="card"><div class="k">Requests / sec</div><div class="v mono" id="rps">0</div></div>
+    <div class="card"><div class="k">Latency p50</div><div class="v mono" id="p50">0<span class="u"> ms</span></div></div>
+    <div class="card"><div class="k">Latency p99</div><div class="v mono" id="p99">0<span class="u"> ms</span></div></div>
+    <div class="card"><div class="k">Success</div><div class="v mono" id="success">100<span class="u"> %</span></div></div>
+    <div class="card"><div class="k">Total requests</div><div class="v mono" id="total">0</div></div>
+    <div class="card"><div class="k">Elapsed</div><div class="v mono" id="elapsed">0<span class="u"> s</span></div></div>
+  </div>
+
+  <div class="row2">
+    <div class="panel">
+      <h2>Throughput (req/sec)</h2>
+      <canvas id="rpsChart"></canvas>
+    </div>
+    <div class="panel">
+      <h2>Latency (ms)</h2>
+      <div class="legend"><span class="l50">p50</span><span class="l99">p99</span></div>
+      <canvas id="latChart"></canvas>
+    </div>
+  </div>
+
+  <div class="backends" id="backends"></div>
+
+  <div class="row2" style="margin-top:16px">
+    <div class="panel">
+      <h2>Event log</h2>
+      <div class="events" id="events"></div>
+    </div>
+    <div class="panel">
+      <h2>Try this</h2>
+      <div style="color:var(--muted);font-size:13px;line-height:1.7">
+        1. Hit <b style="color:var(--text)">Start Test</b> — watch traffic spread across the backends.<br>
+        2. <b style="color:var(--text)">Kill</b> a backend mid-test — success stays ~100% as traffic fails over and the breaker ejects it.<br>
+        3. <b style="color:var(--text)">Revive</b> it — the breaker probes and it rejoins automatically.<br>
+        4. Switch <b style="color:var(--text)">strategy</b>: <span class="mono">ip_hash</span> sends everything to one backend; <span class="mono">least_latency</span>/<span class="mono">p2c</span> favor the fast ones; <span class="mono">round_robin</span> is even.
+      </div>
+    </div>
+  </div>
+
+  <div class="hint">All traffic flows through the real proxy. Backends, breaker, failover and metrics are live — nothing is faked.</div>
+</div>
+
+<script>
+  const COLORS = { A: '#58a6ff', B: '#3fb950', C: '#d29922', D: '#f778ba' };
+  let running = false;
+  const $ = (id) => document.getElementById(id);
+
+  // ---- charts ----
+  function draw(canvas, seriesList, opts = {}) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+    let max = opts.min || 1;
+    for (const s of seriesList) for (const v of s.data) if (v > max) max = v;
+    max *= 1.15;
+    // gridlines
+    ctx.strokeStyle = '#1c2330'; ctx.lineWidth = 1;
+    for (let i = 1; i < 4; i++) { const y = (h / 4) * i; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+    for (const s of seriesList) {
+      const d = s.data; if (!d.length) continue;
+      const step = w / Math.max(1, d.length - 1);
+      ctx.beginPath();
+      d.forEach((v, i) => { const x = i * step, y = h - (v / max) * h; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.strokeStyle = s.color; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+      if (s.fill) {
+        ctx.lineTo((d.length - 1) * step, h); ctx.lineTo(0, h); ctx.closePath();
+        const g = ctx.createLinearGradient(0, 0, 0, h);
+        g.addColorStop(0, s.color + '33'); g.addColorStop(1, s.color + '00');
+        ctx.fillStyle = g; ctx.fill();
+      }
+    }
+  }
+
+  // ---- render ----
+  function render(s) {
+    running = s.running;
+    $('pulse').className = 'pulse' + (running ? ' on' : '');
+    $('liveText').textContent = running ? `running · ${s.workers} workers · ${s.elapsed}s` : 'idle';
+    $('testBtn').textContent = running ? '■ Stop Test' : '▶ Start Test';
+    $('testBtn').className = 'btn-primary' + (running ? ' running' : '');
+    if (document.activeElement !== $('strategy')) $('strategy').value = s.strategy;
+
+    $('rps').textContent = s.rps;
+    $('p50').innerHTML = s.p50 + '<span class="u"> ms</span>';
+    $('p99').innerHTML = s.p99 + '<span class="u"> ms</span>';
+    const okColor = s.successPct >= 99.9 ? 'var(--green)' : s.successPct >= 95 ? 'var(--amber)' : 'var(--red)';
+    $('success').innerHTML = `<span style="color:${okColor}">${s.successPct}</span><span class="u"> %</span>`;
+    $('total').textContent = s.totals.total.toLocaleString();
+    $('elapsed').innerHTML = s.elapsed + '<span class="u"> s</span>';
+
+    draw($('rpsChart'), [{ data: s.series.rps, color: '#7c5cff', fill: true }]);
+    draw($('latChart'), [
+      { data: s.series.p50, color: '#58a6ff' },
+      { data: s.series.p99, color: '#d29922' },
+    ]);
+
+    $('backends').innerHTML = s.backends.map((b) => {
+      const cls = b.dead || !b.alive ? 'red' : b.breaker === 'half_open' ? 'amber' : b.breaker === 'open' ? 'red' : 'green';
+      const stateTxt = b.dead ? 'killed' : !b.alive ? 'unhealthy' : b.breaker;
+      const col = COLORS[b.id] || '#58a6ff';
+      return `
+      <div class="be">
+        <div class="be-top">
+          <span class="sdot ${cls}"></span>
+          <span class="name">${b.label}</span>
+          <span class="state mono">${stateTxt}</span>
+        </div>
+        <div class="be-meta">
+          <div><span class="lbl">in-flight</span><b class="mono">${b.active}</b></div>
+          <div><span class="lbl">avg latency</span><b class="mono">${b.latency} ms</b></div>
+          <div><span class="lbl">served</span><b class="mono">${b.served.toLocaleString()}</b></div>
+        </div>
+        <div class="bar"><i style="width:${b.share}%;background:${col}"></i></div>
+        <div class="be-foot">
+          <span class="share">${b.share}% of traffic</span>
+          <button class="kill ${b.dead ? 'revive' : ''}" onclick="toggleBackend('${b.id}')">${b.dead ? 'Revive' : 'Kill'}</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    $('events').innerHTML = s.events.slice().reverse().map((e) => {
+      const t = new Date(e.ts).toLocaleTimeString();
+      return `<div class="ev ${e.kind}"><span class="t mono">${t}</span><span class="m">${e.msg}</span></div>`;
+    }).join('') || '<div style="color:var(--muted)">No events yet.</div>';
+  }
+
+  // ---- controls ----
+  $('testBtn').onclick = () => fetch('/api/test/' + (running ? 'stop' : 'start'), { method: 'POST' });
+  $('strategy').onchange = (e) => fetch('/api/strategy', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ strategy: e.target.value }),
+  });
+  window.toggleBackend = (id) => fetch('/api/backend/' + id + '/toggle', { method: 'POST' });
+
+  // ---- live stream ----
+  const es = new EventSource('/api/stream');
+  es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch {} };
+  es.onerror = () => { $('liveText').textContent = 'reconnecting…'; };
+</script>
+</body>
+</html>
