@@ -1,0 +1,12 @@
+# One-click deploy to Render. The web service runs the dashboard, so opening the
+# service URL lands directly on the live control surface.
+services:
+  - type: web
+    name: load-balancer-dashboard
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: node src/dashboard.js
+    envVars:
+      - key: NODE_VERSION
+        value: "22"

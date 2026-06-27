@@ -206,18 +206,21 @@ curl localhost:8080/users        # data plane
 
 ### Live dashboard (hostable web UI)
 
-A single-page dashboard that boots the real balancer + backends in-process and
-streams live stats over Server-Sent Events. Click **Start Test** to push real
-traffic through the proxy and watch throughput, latency (p50/p99), and per-backend
-distribution update in real time — then kill/revive a backend or switch strategy
-live and watch it react.
+A single-page control surface — styled as a signal-routing instrument — that boots
+the real balancer + backends in-process and streams live stats over Server-Sent
+Events. The hero is an animated routing graph: ingress → balancer → backend ports
+with signal pulses flowing in real time. Hit **Run Test** to push real traffic
+through the proxy; **click a port to pull its cable** (kill it) and watch traffic
+reroute and the breaker eject/recover; switch the routing strategy live.
 
 ```bash
 npm run dashboard          # then open http://localhost:3000
-PORT=8080 npm run dashboard # or host it on any platform's $PORT
 ```
 
-To host it as a web service, run `node src/dashboard.js` (it listens on `$PORT`).
+**Hosting:** the dashboard is the web service's landing page. Deploy on Render
+(the included `render.yaml` sets `startCommand: node src/dashboard.js`) or any
+platform via the `Procfile` — it listens on `$PORT`. Opening the deployed URL
+drops you straight onto the live screen, no commands needed.
 
 ### Chaos demo (watch failover + self-healing)
 
