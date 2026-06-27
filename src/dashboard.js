@@ -100,11 +100,13 @@ async function main() {
     startedAt: 0,
     strategy: 'round_robin',
     totals: { ok: 0, failed: 0, total: 0 },
-    byBackend: {}, // id -> cumulative served
-    tick: { count: 0, lat: [] },
+    byBackend: {}, // id -> cumulative served (lifetime total)
+    tick: { count: 0, lat: [], byBackend: {} },
+    recentWindow: [], // last N ticks of per-backend counts -> live traffic share
     series: { rps: [], p50: [], p99: [] },
     events: [],
   };
+  const SHARE_WINDOW = 6; // ticks (~3s) the live distribution is averaged over
   const labelOf = (id) => BACKEND_DEFS.find((d) => d.id === id)?.label || id;
 
   function addEvent(msg, kind = 'info') {
@@ -127,6 +129,7 @@ async function main() {
           state.totals.ok += 1;
           const id = r.headers.get('x-backend') || body.trim();
           state.byBackend[id] = (state.byBackend[id] || 0) + 1;
+          state.tick.byBackend[id] = (state.tick.byBackend[id] || 0) + 1;
         } else {
           state.totals.failed += 1;
         }
@@ -143,6 +146,8 @@ async function main() {
     state.startedAt = Date.now();
     state.totals = { ok: 0, failed: 0, total: 0 };
     state.byBackend = {};
+    state.recentWindow = [];
+    state.tick = { count: 0, lat: [], byBackend: {} };
     state.series = { rps: [], p50: [], p99: [] };
     addEvent(`Load test started — ${WORKERS} workers`, 'good');
     for (let i = 0; i < WORKERS; i += 1) worker();
@@ -176,10 +181,19 @@ async function main() {
   }
 
   function snapshot() {
-    const totalServed = Object.values(state.byBackend).reduce((a, b) => a + b, 0) || 1;
+    // Live traffic share over the recent window (+ the current partial tick),
+    // so the bars reflect what the balancer is routing *now*, not lifetime totals.
+    const recent = {};
+    let recentTotal = 0;
+    for (const m of state.recentWindow) {
+      for (const k in m) { recent[k] = (recent[k] || 0) + m[k]; recentTotal += m[k]; }
+    }
+    for (const k in state.tick.byBackend) {
+      recent[k] = (recent[k] || 0) + state.tick.byBackend[k]; recentTotal += state.tick.byBackend[k];
+    }
+    recentTotal = recentTotal || 1;
     const backends = pool.backends.map((b) => {
       const id = urlToId.get(b.target) || b.host;
-      const served = state.byBackend[id] || 0;
       return {
         id,
         label: labelOf(id),
@@ -188,8 +202,8 @@ async function main() {
         breaker: b.breaker.state,
         active: b.activeRequests(),
         latency: round(b.avgLatency()),
-        served,
-        share: Math.round((served / totalServed) * 100),
+        served: state.byBackend[id] || 0,
+        share: Math.round(((recent[id] || 0) / recentTotal) * 100),
       };
     });
     const successPct = state.totals.total ? (state.totals.ok / state.totals.total) * 100 : 100;
@@ -223,7 +237,9 @@ async function main() {
     for (const k of Object.keys(state.series)) {
       if (state.series[k].length > 120) state.series[k].shift();
     }
-    state.tick = { count: 0, lat: [] };
+    state.recentWindow.push(state.tick.byBackend);
+    if (state.recentWindow.length > SHARE_WINDOW) state.recentWindow.shift();
+    state.tick = { count: 0, lat: [], byBackend: {} };
 
     for (const b of pool.backends) {
       const id = urlToId.get(b.target) || b.host;
