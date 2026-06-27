@@ -9,6 +9,7 @@ RUN npm ci --omit=dev
 
 COPY src ./src
 COPY mock_servers ./mock_servers
+COPY public ./public
 COPY routes.json routes.docker.json ./
 
 # Data plane :8080, control plane :8090 (and :9100 for cluster metrics).

@@ -204,6 +204,21 @@ curl localhost:8080/users        # data plane
 # Prometheus: http://localhost:9090   Grafana: http://localhost:3000 (admin/admin)
 ```
 
+### Live dashboard (hostable web UI)
+
+A single-page dashboard that boots the real balancer + backends in-process and
+streams live stats over Server-Sent Events. Click **Start Test** to push real
+traffic through the proxy and watch throughput, latency (p50/p99), and per-backend
+distribution update in real time — then kill/revive a backend or switch strategy
+live and watch it react.
+
+```bash
+npm run dashboard          # then open http://localhost:3000
+PORT=8080 npm run dashboard # or host it on any platform's $PORT
+```
+
+To host it as a web service, run `node src/dashboard.js` (it listens on `$PORT`).
+
 ### Chaos demo (watch failover + self-healing)
 
 Drives steady traffic, kills a backend mid-flight, then revives it — printing a
