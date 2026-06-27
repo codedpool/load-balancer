@@ -3,240 +3,435 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Load Balancer — Live Dashboard</title>
+<title>Load Balancer — signal router</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
   :root {
-    --bg: #0b0e14; --panel: #11151d; --panel2: #161b25; --border: #232a36;
-    --text: #e6edf3; --muted: #8b949e; --green: #3fb950; --amber: #d29922;
-    --red: #f85149; --blue: #58a6ff; --accent: #7c5cff;
-    --A: #58a6ff; --B: #3fb950; --C: #d29922; --D: #f778ba;
+    --rack: #15171b; --panel: #20242b; --raise: #262b34; --edge: #333a45;
+    --line: #2a2f38; --ink: #ece8df; --muted: #889; --muted2: #6a7079;
+    --signal: #ffae3b; --signal-dim: #6b4f25;
+    --ok: #57d08a; --down: #ff5d52;
+    --pa: #ffae3b; --pb: #57d08a; --pc: #6fb6ff; --pd: #c98bff;
   }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0; background: var(--rack); color: var(--ink);
+    font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+    -webkit-font-smoothing: antialiased;
   }
-  .mono { font-family: "SF Mono", "Cascadia Code", Consolas, monospace; }
-  header {
-    display: flex; align-items: center; gap: 16px; padding: 14px 22px;
-    border-bottom: 1px solid var(--border); background: var(--panel);
-    position: sticky; top: 0; z-index: 10; flex-wrap: wrap;
+  .disp { font-family: "Archivo", system-ui, sans-serif; }
+  .lab { font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--muted2); }
+
+  .shell { max-width: 1180px; margin: 0 auto; padding: 18px; min-height: 100%; }
+
+  /* device panel */
+  .device {
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.025), rgba(0,0,0,.18)),
+      var(--panel);
+    border: 1px solid var(--edge); border-radius: 14px;
+    box-shadow: 0 1px 0 rgba(255,255,255,.04) inset, 0 24px 60px -30px #000;
+    overflow: hidden;
   }
-  header h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: .2px; }
-  header h1 .dot { color: var(--accent); }
-  .spacer { flex: 1; }
-  .live { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; }
-  .pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
-  .pulse.on { background: var(--green); box-shadow: 0 0 0 0 rgba(63,185,80,.6); animation: pulse 1.4s infinite; }
-  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(63,185,80,.5)} 70%{box-shadow:0 0 0 7px rgba(63,185,80,0)} 100%{box-shadow:0 0 0 0 rgba(63,185,80,0)} }
-  select, button {
-    font: inherit; color: var(--text); background: var(--panel2);
-    border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; cursor: pointer;
+
+  /* header / faceplate */
+  .face { display: flex; align-items: center; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+  .mark { display: flex; align-items: baseline; gap: 12px; }
+  .mark .name { font-weight: 800; font-size: 20px; letter-spacing: .04em; }
+  .mark .model { font-size: 11px; color: var(--muted2); letter-spacing: .16em; }
+  .led-power { width: 9px; height: 9px; border-radius: 50%; background: var(--signal-dim); }
+  .led-power.on { background: var(--signal); box-shadow: 0 0 10px 1px var(--signal); }
+  .face .grow { flex: 1; }
+  .ctl { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .knob { display: flex; flex-direction: column; gap: 4px; }
+  select {
+    font: inherit; font-size: 13px; color: var(--ink); background: var(--raise);
+    border: 1px solid var(--edge); border-radius: 8px; padding: 7px 10px; cursor: pointer;
   }
-  select:hover, button:hover { border-color: #3a4453; }
-  .btn-primary {
-    font-weight: 650; padding: 9px 20px; border: none;
-    background: var(--green); color: #04230d;
+  select:focus-visible, .run:focus-visible, .port:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+  .run {
+    font-family: "Archivo", sans-serif; font-weight: 800; letter-spacing: .08em;
+    font-size: 14px; padding: 11px 26px; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--signal); color: #1a1205; background: var(--signal);
+    box-shadow: 0 0 24px -6px var(--signal); transition: transform .06s ease;
   }
-  .btn-primary.running { background: var(--red); color: #fff; }
-  .wrap { max-width: 1200px; margin: 0 auto; padding: 22px; }
-  .grid-stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
-  .card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
-  .card .v { font-size: 26px; font-weight: 650; margin-top: 4px; }
-  .card .u { color: var(--muted); font-size: 13px; font-weight: 400; }
-  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
-  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
-  .panel h2 { font-size: 13px; margin: 0 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; font-weight: 600; }
-  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
-  .legend span::before { content: ""; display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
-  .legend .l50::before { background: var(--blue); } .legend .l99::before { background: var(--amber); }
-  canvas { width: 100%; height: 150px; display: block; }
-  .backends { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 16px; }
-  .be { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
-  .be-top { display: flex; align-items: center; gap: 10px; }
-  .be .sdot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
-  .sdot.green { background: var(--green); } .sdot.amber { background: var(--amber); } .sdot.red { background: var(--red); }
-  .be .name { font-weight: 600; }
-  .be .state { color: var(--muted); font-size: 12px; }
-  .be-meta { display: flex; gap: 18px; margin: 10px 0 8px; font-size: 13px; }
-  .be-meta b { font-weight: 650; }
-  .be-meta .lbl { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; display: block; }
-  .bar { height: 8px; background: var(--panel2); border-radius: 5px; overflow: hidden; }
-  .bar > i { display: block; height: 100%; border-radius: 5px; transition: width .4s ease; }
-  .be-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
-  .be-foot .share { color: var(--muted); font-size: 12px; }
-  .kill { padding: 5px 12px; font-size: 12px; border-radius: 7px; }
-  .kill.revive { color: var(--green); border-color: #1f3d28; }
-  .events { max-height: 280px; overflow-y: auto; font-size: 13px; }
-  .ev { display: flex; gap: 10px; padding: 5px 0; border-bottom: 1px solid #1a2029; }
-  .ev .t { color: var(--muted); flex-shrink: 0; }
-  .ev.good .m { color: var(--green); } .ev.bad .m { color: var(--red); } .ev.info .m { color: var(--text); }
-  .hint { color: var(--muted); font-size: 12px; margin-top: 18px; text-align: center; }
-  @media (max-width: 820px) { .grid-stats { grid-template-columns: repeat(3,1fr);} .row2,.backends{grid-template-columns:1fr;} }
+  .run:active { transform: translateY(1px); }
+  .run.stop { background: transparent; color: var(--down); border-color: var(--down); box-shadow: none; }
+
+  /* readout strip */
+  .strip { display: grid; grid-template-columns: repeat(5, 1fr); border-bottom: 1px solid var(--line); }
+  .gauge { padding: 14px 20px; border-right: 1px solid var(--line); }
+  .gauge:last-child { border-right: none; }
+  .gauge .val { font-size: 30px; font-weight: 600; line-height: 1; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .gauge .val .un { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 3px; }
+  .gauge.live .val { color: var(--signal); }
+
+  /* body grid */
+  .body { display: grid; grid-template-columns: 1.6fr 1fr; }
+  .bay { border-right: 1px solid var(--line); }
+  .graphwrap { position: relative; }
+  canvas#graph { display: block; width: 100%; height: 360px; }
+  .armed {
+    position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
+    color: var(--muted); font-size: 12px; letter-spacing: .16em; text-transform: uppercase;
+    transition: opacity .4s ease;
+  }
+  .scope { border-top: 1px solid var(--line); padding: 12px 16px 14px; }
+  .scope .lab { margin-bottom: 8px; }
+  canvas#scope { display: block; width: 100%; height: 74px; }
+
+  /* ports panel */
+  .side { display: flex; flex-direction: column; }
+  .ports { padding: 10px 12px; }
+  .ports .lab { padding: 6px 6px 10px; }
+  .port {
+    display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px;
+    width: 100%; text-align: left; background: var(--raise); border: 1px solid var(--line);
+    border-radius: 10px; padding: 11px 13px; margin-bottom: 8px; cursor: pointer; color: inherit;
+    font: inherit; transition: border-color .15s ease, opacity .2s ease;
+  }
+  .port:hover { border-color: var(--edge); }
+  .port.dead { opacity: .55; }
+  .port .led { width: 11px; height: 11px; border-radius: 50%; }
+  .led.g { background: var(--ok); box-shadow: 0 0 8px -1px var(--ok); }
+  .led.a { background: var(--signal); box-shadow: 0 0 8px -1px var(--signal); }
+  .led.r { background: var(--down); box-shadow: 0 0 8px -1px var(--down); }
+  .port .pname { font-weight: 600; font-size: 13px; }
+  .port .pmeta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .port .pright { text-align: right; }
+  .port .pshare { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .port .pbar { height: 3px; background: var(--line); border-radius: 2px; margin-top: 5px; width: 56px; overflow: hidden; }
+  .port .pbar > i { display: block; height: 100%; }
+  .port .pact { font-size: 10px; color: var(--muted2); letter-spacing: .12em; text-transform: uppercase; margin-top: 6px; }
+
+  .console { border-top: 1px solid var(--line); padding: 12px 14px; flex: 1; display: flex; flex-direction: column; min-height: 150px; }
+  .console .lab { margin-bottom: 8px; }
+  .feed { font-size: 12px; line-height: 1.7; overflow-y: auto; max-height: 200px; }
+  .feed .row { display: flex; gap: 10px; }
+  .feed .ts { color: var(--muted2); }
+  .feed .m.good { color: var(--ok); } .feed .m.bad { color: var(--down); } .feed .m.info { color: var(--ink); }
+  .feed .empty { color: var(--muted2); }
+
+  .foot { padding: 12px 4px 4px; color: var(--muted2); font-size: 11px; text-align: center; letter-spacing: .04em; }
+  .foot b { color: var(--muted); font-weight: 500; }
+
+  @media (max-width: 860px) {
+    .body { grid-template-columns: 1fr; }
+    .bay { border-right: none; border-bottom: 1px solid var(--line); }
+    .strip { grid-template-columns: repeat(2, 1fr); }
+    .gauge:nth-child(odd) { border-right: 1px solid var(--line); }
+  }
+  @media (prefers-reduced-motion: reduce) { .led-power.on, .led.g, .led.a, .led.r { animation: none; } }
 </style>
 </head>
 <body>
-<header>
-  <h1><span class="dot">●</span> Load Balancer <span style="color:var(--muted);font-weight:400">live dashboard</span></h1>
-  <div class="live"><span class="pulse" id="pulse"></span><span id="liveText">idle</span></div>
-  <div class="spacer"></div>
-  <label class="live" style="gap:8px">strategy
-    <select id="strategy" title="Switch the balancing strategy live">
-      <option value="round_robin">round_robin</option>
-      <option value="weighted_round_robin">weighted_round_robin</option>
-      <option value="least_latency">least_latency</option>
-      <option value="least_active">least_active</option>
-      <option value="least_loaded">least_loaded</option>
-      <option value="p2c">p2c (power of two)</option>
-      <option value="ip_hash">ip_hash</option>
-    </select>
-  </label>
-  <button class="btn-primary" id="testBtn">▶ Start Test</button>
-</header>
+<div class="shell">
+  <div class="device">
 
-<div class="wrap">
-  <div class="grid-stats">
-    <div class="card"><div class="k">Requests / sec</div><div class="v mono" id="rps">0</div></div>
-    <div class="card"><div class="k">Latency p50</div><div class="v mono" id="p50">0<span class="u"> ms</span></div></div>
-    <div class="card"><div class="k">Latency p99</div><div class="v mono" id="p99">0<span class="u"> ms</span></div></div>
-    <div class="card"><div class="k">Success</div><div class="v mono" id="success">100<span class="u"> %</span></div></div>
-    <div class="card"><div class="k">Total requests</div><div class="v mono" id="total">0</div></div>
-    <div class="card"><div class="k">Elapsed</div><div class="v mono" id="elapsed">0<span class="u"> s</span></div></div>
-  </div>
-
-  <div class="row2">
-    <div class="panel">
-      <h2>Throughput (req/sec)</h2>
-      <canvas id="rpsChart"></canvas>
-    </div>
-    <div class="panel">
-      <h2>Latency (ms)</h2>
-      <div class="legend"><span class="l50">p50</span><span class="l99">p99</span></div>
-      <canvas id="latChart"></canvas>
-    </div>
-  </div>
-
-  <div class="backends" id="backends"></div>
-
-  <div class="row2" style="margin-top:16px">
-    <div class="panel">
-      <h2>Event log</h2>
-      <div class="events" id="events"></div>
-    </div>
-    <div class="panel">
-      <h2>Try this</h2>
-      <div style="color:var(--muted);font-size:13px;line-height:1.7">
-        1. Hit <b style="color:var(--text)">Start Test</b> — watch traffic spread across the backends.<br>
-        2. <b style="color:var(--text)">Kill</b> a backend mid-test — success stays ~100% as traffic fails over and the breaker ejects it.<br>
-        3. <b style="color:var(--text)">Revive</b> it — the breaker probes and it rejoins automatically.<br>
-        4. Switch <b style="color:var(--text)">strategy</b>: <span class="mono">ip_hash</span> sends everything to one backend; <span class="mono">least_latency</span>/<span class="mono">p2c</span> favor the fast ones; <span class="mono">round_robin</span> is even.
+    <div class="face">
+      <span class="led-power" id="power"></span>
+      <div class="mark">
+        <span class="name disp">LOAD&nbsp;BALANCER</span>
+        <span class="model">L7&nbsp;·&nbsp;NODE&nbsp;·&nbsp;REV&nbsp;1</span>
+      </div>
+      <div class="grow"></div>
+      <div class="ctl">
+        <div class="knob">
+          <label class="lab" for="strategy">routing</label>
+          <select id="strategy" title="Switch the balancing strategy live">
+            <option value="round_robin">round robin</option>
+            <option value="weighted_round_robin">weighted round robin</option>
+            <option value="least_latency">least latency</option>
+            <option value="least_active">least active</option>
+            <option value="least_loaded">least loaded</option>
+            <option value="p2c">power of two</option>
+            <option value="ip_hash">ip hash</option>
+          </select>
+        </div>
+        <button type="button" class="run" id="run">▶ RUN TEST</button>
       </div>
     </div>
-  </div>
 
-  <div class="hint">All traffic flows through the real proxy. Backends, breaker, failover and metrics are live — nothing is faked.</div>
+    <div class="strip">
+      <div class="gauge live"><div class="lab">throughput</div><div class="val" id="rps">0<span class="un">req/s</span></div></div>
+      <div class="gauge"><div class="lab">latency p50</div><div class="val" id="p50">0<span class="un">ms</span></div></div>
+      <div class="gauge"><div class="lab">latency p99</div><div class="val" id="p99">0<span class="un">ms</span></div></div>
+      <div class="gauge"><div class="lab">success</div><div class="val" id="success">100<span class="un">%</span></div></div>
+      <div class="gauge"><div class="lab">requests</div><div class="val" id="total">0</div></div>
+    </div>
+
+    <div class="body">
+      <div class="bay">
+        <div class="graphwrap">
+          <canvas id="graph"></canvas>
+          <div class="armed" id="armed">press run to send traffic through the router</div>
+        </div>
+        <div class="scope">
+          <div class="lab">throughput trace</div>
+          <canvas id="scope"></canvas>
+        </div>
+      </div>
+
+      <div class="side">
+        <div class="ports">
+          <div class="lab">backend ports — click to pull a cable</div>
+          <div id="ports"></div>
+        </div>
+        <div class="console">
+          <div class="lab">console</div>
+          <div class="feed" id="feed"><div class="empty">awaiting activity…</div></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  <div class="foot">Real traffic flows through the actual proxy. Health, failover and the circuit breaker are <b>live</b> — nothing here is simulated.</div>
 </div>
 
 <script>
-  const COLORS = { A: '#58a6ff', B: '#3fb950', C: '#d29922', D: '#f778ba' };
-  let running = false;
+  const PORT_HUES = { A: '#ffae3b', B: '#57d08a', C: '#6fb6ff', D: '#c98bff' };
   const $ = (id) => document.getElementById(id);
+  let latest = null, running = false, portRects = [];
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  // ---- charts ----
-  function draw(canvas, seriesList, opts = {}) {
-    const dpr = window.devicePixelRatio || 1;
-    const w = canvas.clientWidth, h = canvas.clientHeight;
-    canvas.width = w * dpr; canvas.height = h * dpr;
-    const ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, w, h);
-    let max = opts.min || 1;
-    for (const s of seriesList) for (const v of s.data) if (v > max) max = v;
-    max *= 1.15;
-    // gridlines
-    ctx.strokeStyle = '#1c2330'; ctx.lineWidth = 1;
-    for (let i = 1; i < 4; i++) { const y = (h / 4) * i; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
-    for (const s of seriesList) {
-      const d = s.data; if (!d.length) continue;
-      const step = w / Math.max(1, d.length - 1);
-      ctx.beginPath();
-      d.forEach((v, i) => { const x = i * step, y = h - (v / max) * h; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-      ctx.strokeStyle = s.color; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
-      if (s.fill) {
-        ctx.lineTo((d.length - 1) * step, h); ctx.lineTo(0, h); ctx.closePath();
-        const g = ctx.createLinearGradient(0, 0, 0, h);
-        g.addColorStop(0, s.color + '33'); g.addColorStop(1, s.color + '00');
-        ctx.fillStyle = g; ctx.fill();
-      }
-    }
+  // ---------- DOM render (driven by each SSE frame) ----------
+  function ledClass(b) {
+    if (b.dead || !b.alive || b.breaker === 'open') return 'r';
+    if (b.breaker === 'half_open') return 'a';
+    return 'g';
   }
-
-  // ---- render ----
-  function render(s) {
+  function stateText(b) {
+    if (b.dead) return 'cable pulled';
+    if (!b.alive) return 'unreachable';
+    return b.breaker === 'half_open' ? 'recovering' : b.breaker === 'open' ? 'ejected' : 'in service';
+  }
+  function renderDOM(s) {
     running = s.running;
-    $('pulse').className = 'pulse' + (running ? ' on' : '');
-    $('liveText').textContent = running ? `running · ${s.workers} workers · ${s.elapsed}s` : 'idle';
-    $('testBtn').textContent = running ? '■ Stop Test' : '▶ Start Test';
-    $('testBtn').className = 'btn-primary' + (running ? ' running' : '');
+    $('power').className = 'led-power' + (running ? ' on' : '');
+    $('run').textContent = running ? '■ STOP' : '▶ RUN TEST';
+    $('run').className = 'run' + (running ? ' stop' : '');
+    $('armed').style.opacity = running ? '0' : '1';
     if (document.activeElement !== $('strategy')) $('strategy').value = s.strategy;
 
-    $('rps').textContent = s.rps;
-    $('p50').innerHTML = s.p50 + '<span class="u"> ms</span>';
-    $('p99').innerHTML = s.p99 + '<span class="u"> ms</span>';
-    const okColor = s.successPct >= 99.9 ? 'var(--green)' : s.successPct >= 95 ? 'var(--amber)' : 'var(--red)';
-    $('success').innerHTML = `<span style="color:${okColor}">${s.successPct}</span><span class="u"> %</span>`;
+    $('rps').innerHTML = s.rps + '<span class="un">req/s</span>';
+    $('p50').innerHTML = s.p50 + '<span class="un">ms</span>';
+    $('p99').innerHTML = s.p99 + '<span class="un">ms</span>';
+    const sc = s.successPct >= 99.9 ? 'var(--ok)' : s.successPct >= 95 ? 'var(--signal)' : 'var(--down)';
+    $('success').innerHTML = `<span style="color:${sc}">${s.successPct}</span><span class="un">%</span>`;
     $('total').textContent = s.totals.total.toLocaleString();
-    $('elapsed').innerHTML = s.elapsed + '<span class="u"> s</span>';
 
-    draw($('rpsChart'), [{ data: s.series.rps, color: '#7c5cff', fill: true }]);
-    draw($('latChart'), [
-      { data: s.series.p50, color: '#58a6ff' },
-      { data: s.series.p99, color: '#d29922' },
-    ]);
-
-    $('backends').innerHTML = s.backends.map((b) => {
-      const cls = b.dead || !b.alive ? 'red' : b.breaker === 'half_open' ? 'amber' : b.breaker === 'open' ? 'red' : 'green';
-      const stateTxt = b.dead ? 'killed' : !b.alive ? 'unhealthy' : b.breaker;
-      const col = COLORS[b.id] || '#58a6ff';
-      return `
-      <div class="be">
-        <div class="be-top">
-          <span class="sdot ${cls}"></span>
-          <span class="name">${b.label}</span>
-          <span class="state mono">${stateTxt}</span>
-        </div>
-        <div class="be-meta">
-          <div><span class="lbl">in-flight</span><b class="mono">${b.active}</b></div>
-          <div><span class="lbl">avg latency</span><b class="mono">${b.latency} ms</b></div>
-          <div><span class="lbl">served</span><b class="mono">${b.served.toLocaleString()}</b></div>
-        </div>
-        <div class="bar"><i style="width:${b.share}%;background:${col}"></i></div>
-        <div class="be-foot">
-          <span class="share">${b.share}% of traffic</span>
-          <button class="kill ${b.dead ? 'revive' : ''}" onclick="toggleBackend('${b.id}')">${b.dead ? 'Revive' : 'Kill'}</button>
-        </div>
-      </div>`;
+    $('ports').innerHTML = s.backends.map((b) => {
+      const hue = PORT_HUES[b.id] || 'var(--signal)';
+      return `<button type="button" class="port ${b.dead ? 'dead' : ''}" onclick="toggle('${b.id}')" aria-label="${b.label}, ${stateText(b)}. Click to ${b.dead ? 'revive' : 'kill'}.">
+        <span class="led ${ledClass(b)}"></span>
+        <span><span class="pname">${b.label}</span><div class="pmeta">${b.active} in-flight · ${b.latency} ms avg</div></span>
+        <span class="pright"><div class="pshare">${b.share}<span style="font-size:11px;color:var(--muted)">%</span></div><div class="pbar"><i style="width:${b.share}%;background:${hue}"></i></div><div class="pact">${stateText(b)}</div></span>
+      </button>`;
     }).join('');
 
-    $('events').innerHTML = s.events.slice().reverse().map((e) => {
-      const t = new Date(e.ts).toLocaleTimeString();
-      return `<div class="ev ${e.kind}"><span class="t mono">${t}</span><span class="m">${e.msg}</span></div>`;
-    }).join('') || '<div style="color:var(--muted)">No events yet.</div>';
+    $('feed').innerHTML = s.events.length
+      ? s.events.slice().reverse().map((e) =>
+          `<div class="row"><span class="ts">${new Date(e.ts).toTimeString().slice(0,8)}</span><span class="m ${e.kind}">${e.msg}</span></div>`
+        ).join('')
+      : '<div class="empty">awaiting activity…</div>';
+
+    drawScope(s.series.rps);
   }
 
-  // ---- controls ----
-  $('testBtn').onclick = () => fetch('/api/test/' + (running ? 'stop' : 'start'), { method: 'POST' });
-  $('strategy').onchange = (e) => fetch('/api/strategy', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ strategy: e.target.value }),
-  });
-  window.toggleBackend = (id) => fetch('/api/backend/' + id + '/toggle', { method: 'POST' });
+  // ---------- throughput scope ----------
+  function fit(c, h) {
+    const dpr = window.devicePixelRatio || 1, w = c.clientWidth;
+    c.width = w * dpr; c.height = h * dpr;
+    const x = c.getContext('2d'); x.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { x, w, h };
+  }
+  function drawScope(data) {
+    const c = $('scope'); const { x, w, h } = fit(c, 74);
+    x.clearRect(0, 0, w, h);
+    x.strokeStyle = '#23282f'; x.lineWidth = 1;
+    for (let i = 1; i < 3; i++) { const y = (h/3)*i; x.beginPath(); x.moveTo(0,y); x.lineTo(w,y); x.stroke(); }
+    if (!data || !data.length) return;
+    let max = 1; for (const v of data) if (v > max) max = v; max *= 1.2;
+    const step = w / Math.max(1, data.length - 1);
+    x.beginPath();
+    data.forEach((v, i) => { const px = i*step, py = h - (v/max)*h; i ? x.lineTo(px,py) : x.moveTo(px,py); });
+    x.strokeStyle = '#ffae3b'; x.lineWidth = 1.5; x.lineJoin = 'round'; x.stroke();
+    x.lineTo((data.length-1)*step, h); x.lineTo(0, h); x.closePath();
+    const g = x.createLinearGradient(0,0,0,h); g.addColorStop(0,'#ffae3b30'); g.addColorStop(1,'#ffae3b00');
+    x.fillStyle = g; x.fill();
+  }
 
-  // ---- live stream ----
+  // ---------- the routing graph (signature) ----------
+  const pulses = []; let spawnAcc = 0, lastT = 0;
+  function bez(t, p0, p1, p2, p3) {
+    const u = 1 - t;
+    return {
+      x: u*u*u*p0.x + 3*u*u*t*p1.x + 3*u*t*t*p2.x + t*t*t*p3.x,
+      y: u*u*u*p0.y + 3*u*u*t*p1.y + 3*u*t*t*p2.y + t*t*t*p3.y,
+    };
+  }
+  function pickPort(backs) {
+    const elig = backs.filter((b) => !b.dead && b.alive && b.share > 0);
+    if (!elig.length) return null;
+    const total = elig.reduce((a, b) => a + b.share, 0);
+    let r = Math.random() * total;
+    for (const b of elig) { r -= b.share; if (r <= 0) return b; }
+    return elig[elig.length - 1];
+  }
+  function frame(ts) {
+    const c = $('graph'); const { x, w, h } = fit(c, 360);
+    const dt = lastT ? Math.min(0.05, (ts - lastT) / 1000) : 0; lastT = ts;
+    x.clearRect(0, 0, w, h);
+
+    // graticule
+    x.strokeStyle = '#1e232b'; x.lineWidth = 1;
+    for (let gx = 28; gx < w; gx += 28) { x.beginPath(); x.moveTo(gx,0); x.lineTo(gx,h); x.stroke(); }
+    for (let gy = 28; gy < h; gy += 28) { x.beginPath(); x.moveTo(0,gy); x.lineTo(w,gy); x.stroke(); }
+
+    const s = latest;
+    const backs = s ? s.backends : [];
+    const n = Math.max(1, backs.length);
+    const ingress = { x: 46, y: h/2 };
+    const lb = { x: w*0.40, y: h/2, w: 132, h: 64 };
+    const lbRight = lb.x + lb.w/2;
+    const portX = w - 132;
+    const slot = h / (n + 1);
+    portRects = [];
+    const portPts = backs.map((b, i) => ({ b, x: portX, y: slot*(i+1) }));
+
+    // ingress -> LB wire
+    const totalActive = s && s.rps > 0;
+    x.strokeStyle = totalActive ? '#ffae3b' : '#2a2f38';
+    x.globalAlpha = totalActive ? 0.5 : 1; x.lineWidth = totalActive ? 2.5 : 1.5;
+    x.beginPath(); x.moveTo(ingress.x+8, ingress.y); x.lineTo(lb.x - lb.w/2, lb.y); x.stroke();
+    x.globalAlpha = 1;
+
+    // LB -> port wires
+    for (const p of portPts) {
+      const c1 = { x: lbRight + 70, y: lb.y }, c2 = { x: p.x - 70, y: p.y };
+      const dead = p.b.dead || !p.b.alive || p.b.breaker === 'open';
+      const share = p.b.share || 0;
+      // base
+      x.strokeStyle = '#262b33'; x.lineWidth = 1; x.setLineDash([]);
+      x.beginPath(); x.moveTo(lbRight, lb.y); x.bezierCurveTo(c1.x,c1.y,c2.x,c2.y,p.x,p.y); x.stroke();
+      // live overlay
+      if (dead) {
+        x.strokeStyle = '#ff5d52'; x.globalAlpha = 0.5; x.lineWidth = 1.5; x.setLineDash([4,5]);
+        x.beginPath(); x.moveTo(lbRight, lb.y); x.bezierCurveTo(c1.x,c1.y,c2.x,c2.y,p.x,p.y); x.stroke();
+        x.setLineDash([]); x.globalAlpha = 1;
+      } else if (share > 0) {
+        x.strokeStyle = '#ffae3b'; x.globalAlpha = 0.12 + (share/100)*0.55; x.lineWidth = 1 + (share/100)*3.5;
+        x.beginPath(); x.moveTo(lbRight, lb.y); x.bezierCurveTo(c1.x,c1.y,c2.x,c2.y,p.x,p.y); x.stroke();
+        x.globalAlpha = 1;
+      }
+      p._c1 = c1; p._c2 = c2;
+    }
+
+    // spawn pulses ~ proportional to rps
+    if (s && s.running && s.rps > 0 && !reduce) {
+      spawnAcc += s.rps * dt * 0.06;
+      while (spawnAcc >= 1 && pulses.length < 240) { spawnAcc -= 1; pulses.push({ leg: 'in', t: 0, port: null }); }
+    }
+    // advance + draw pulses
+    x.shadowColor = '#ffae3b';
+    for (let i = pulses.length - 1; i >= 0; i--) {
+      const p = pulses[i];
+      p.t += dt / 0.6;
+      let pos;
+      if (p.leg === 'in') {
+        pos = { x: ingress.x + 8 + (lb.x - lb.w/2 - ingress.x - 8) * p.t, y: lb.y };
+        if (p.t >= 1) {
+          const target = pickPort(backs);
+          if (!target) { pulses.splice(i,1); continue; }
+          const pp = portPts.find((q) => q.b.id === target.id);
+          p.leg = 'out'; p.t = 0; p.port = pp;
+          continue;
+        }
+      } else {
+        const pp = p.port;
+        if (!pp || pp.b.dead) { pulses.splice(i,1); continue; }
+        pos = bez(p.t, { x: lbRight, y: lb.y }, pp._c1, pp._c2, { x: pp.x, y: pp.y });
+        if (p.t >= 1) { pulses.splice(i,1); }
+      }
+      x.shadowBlur = 6; x.fillStyle = '#ffd58a';
+      x.beginPath(); x.arc(pos.x, pos.y, 2.4, 0, 7); x.fill();
+    }
+    x.shadowBlur = 0;
+
+    // ingress node
+    x.fillStyle = '#262b34'; x.strokeStyle = '#333a45'; x.lineWidth = 1;
+    roundRect(x, ingress.x - 8, ingress.y - 26, 16, 52, 5); x.fill(); x.stroke();
+    x.fillStyle = '#889'; x.font = '600 9px "IBM Plex Mono", monospace'; x.textAlign = 'center';
+    x.save(); x.translate(ingress.x - 16, ingress.y); x.rotate(-Math.PI/2);
+    x.fillText('INGRESS', 0, 0); x.restore();
+
+    // LB node
+    x.fillStyle = '#20242b'; x.strokeStyle = s && s.running ? '#ffae3b' : '#3a424e'; x.lineWidth = 1.5;
+    roundRect(x, lb.x - lb.w/2, lb.y - lb.h/2, lb.w, lb.h, 10); x.fill(); x.stroke();
+    x.textAlign = 'center';
+    x.fillStyle = '#6a7079'; x.font = '600 9px "IBM Plex Mono", monospace';
+    x.fillText('LOAD BALANCER', lb.x, lb.y - 16);
+    x.fillStyle = '#ece8df'; x.font = '700 22px "IBM Plex Mono", monospace';
+    x.fillText(s ? s.rps : 0, lb.x, lb.y + 8);
+    x.fillStyle = '#ffae3b'; x.font = '500 9px "IBM Plex Mono", monospace';
+    x.fillText('req/s', lb.x, lb.y + 22);
+
+    // port nodes (clickable)
+    for (const p of portPts) {
+      const b = p.b, dead = b.dead || !b.alive || b.breaker === 'open';
+      const led = dead ? '#ff5d52' : b.breaker === 'half_open' ? '#ffae3b' : '#57d08a';
+      const bw = 116, bh = 40, bx = p.x, by = p.y - bh/2;
+      portRects.push({ id: b.id, x: bx, y: by, w: bw, h: bh });
+      x.fillStyle = '#262b34'; x.globalAlpha = dead ? 0.55 : 1;
+      x.strokeStyle = '#333a45'; x.lineWidth = 1;
+      roundRect(x, bx, by, bw, bh, 8); x.fill(); x.stroke();
+      x.shadowColor = led; x.shadowBlur = dead ? 0 : 6; x.fillStyle = led;
+      x.beginPath(); x.arc(bx + 14, p.y, 4.5, 0, 7); x.fill(); x.shadowBlur = 0;
+      x.textAlign = 'left'; x.fillStyle = '#ece8df'; x.font = '600 11px "IBM Plex Mono", monospace';
+      x.fillText(b.id, bx + 26, p.y - 2);
+      x.fillStyle = '#6a7079'; x.font = '500 9px "IBM Plex Mono", monospace';
+      x.fillText(b.latency + 'ms · ' + b.share + '%', bx + 26, p.y + 10);
+      x.globalAlpha = 1;
+    }
+
+    requestAnimationFrame(frame);
+  }
+  function roundRect(x, X, Y, w, h, r) {
+    x.beginPath();
+    x.moveTo(X+r, Y); x.arcTo(X+w, Y, X+w, Y+h, r); x.arcTo(X+w, Y+h, X, Y+h, r);
+    x.arcTo(X, Y+h, X, Y, r); x.arcTo(X, Y, X+w, Y, r); x.closePath();
+  }
+
+  // click a port in the graph to pull its cable
+  $('graph').addEventListener('click', (e) => {
+    const rect = e.target.getBoundingClientRect();
+    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+    for (const r of portRects) {
+      if (cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h) { toggle(r.id); break; }
+    }
+  });
+  $('graph').addEventListener('mousemove', (e) => {
+    const rect = e.target.getBoundingClientRect();
+    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+    const over = portRects.some((r) => cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h);
+    e.target.style.cursor = over ? 'pointer' : 'default';
+  });
+
+  // ---------- controls ----------
+  $('run').onclick = () => fetch('/api/test/' + (running ? 'stop' : 'start'), { method: 'POST' });
+  $('strategy').onchange = (e) => fetch('/api/strategy', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ strategy: e.target.value }),
+  });
+  window.toggle = (id) => fetch('/api/backend/' + id + '/toggle', { method: 'POST' });
+
+  // ---------- live stream ----------
   const es = new EventSource('/api/stream');
-  es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch {} };
-  es.onerror = () => { $('liveText').textContent = 'reconnecting…'; };
+  es.onmessage = (e) => { try { latest = JSON.parse(e.data); renderDOM(latest); } catch {} };
+  requestAnimationFrame(frame);
+  window.addEventListener('resize', () => latest && drawScope(latest.series.rps));
 </script>
 </body>
 </html>
