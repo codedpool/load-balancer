@@ -5,7 +5,8 @@
   "type": "module",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
+    "start": "node src/dashboard.js",
+    "start:proxy": "node src/server.js",
     "start:cluster": "node src/cluster.js",
     "dashboard": "node src/dashboard.js",
     "mock": "node mock_servers/start.js",

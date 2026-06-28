@@ -180,16 +180,18 @@ npm install
 
 ## Quick Start
 
+Fastest way to see everything — the self-contained live dashboard:
+
 ```bash
-# 1. Start the mock backend servers (ports 8081-8083, 8091-8092)
-npm run mock
+npm install
+npm start            # live dashboard -> http://localhost:3000
+```
 
-# 2. In another terminal, start the load balancer (port 8080)
-npm start
-# ...or run multi-core: one worker per CPU
-npm run start:cluster
+To run the raw proxy instead (it needs the mock backends in another terminal):
 
-# 3. Send a request
+```bash
+npm run mock         # backends on 8081-8083, 8091-8092
+npm run start:proxy  # the load balancer on :8080  (or: npm run start:cluster)
 curl http://localhost:8080/users
 ```
 
