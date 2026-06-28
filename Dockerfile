@@ -12,10 +12,13 @@ COPY mock_servers ./mock_servers
 COPY public ./public
 COPY routes.json routes.docker.json ./
 
-# Data plane :8080, control plane :8090 (and :9100 for cluster metrics).
-EXPOSE 8080 8090
+# Dashboard :3000 (default), proxy data plane :8080, control plane :8090.
+EXPOSE 3000 8080 8090
 
 # Drop root.
 USER node
 
-CMD ["node", "src/server.js"]
+# Default to the self-contained live dashboard (binds to $PORT). It's the thing
+# you host. The bare proxy is `node src/server.js`; docker-compose overrides this
+# command per service.
+CMD ["node", "src/dashboard.js"]
